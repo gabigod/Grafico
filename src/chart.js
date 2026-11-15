@@ -137,7 +137,7 @@ export class ChartCore {
     const tick = async () => {
       if (this.viewLen) return; // em replay
       try {
-        const [p] = await oanda.pricing([this.instrument]);
+        const [p] = await oanda.pricing([this.instrument], { name: this.instrument, gran: this.tf.gran });
         if (p && isFinite(p.mid)) this.applyTick(p);
         const now = Date.now();
         const last = this.bars.at(-1);
@@ -149,7 +149,16 @@ export class ChartCore {
   }
   stopLive() { clearInterval(this.liveTimer); this.liveTimer = null; }
   applyTick(p) {
-    const last = this.bars.at(-1); if (!last || last.complete) return;
+    let last = this.bars.at(-1); if (!last) return;
+    const lb = p.liveBar;
+    if (lb && lb.time > last.time) {
+      // barra nova chegou pelo fluxo ao vivo
+      last.complete = true; this.bars.push({ ...lb, complete: false });
+      if (!this.viewLen) { this.main.setData(this.seriesData(this.bars)); this.emit('newBar'); }
+      return;
+    }
+    if (lb && lb.time === last.time) { Object.assign(last, { open: lb.open, high: Math.max(lb.high, p.mid), low: Math.min(lb.low, p.mid) }); last.complete = false; }
+    if (last.complete) return;
     last.close = p.mid; last.high = Math.max(last.high, p.mid); last.low = Math.min(last.low, p.mid);
     if (!oanda.hasOanda()) oanda.demoTick(this.instrument, this.tf.gran, p.mid);
     this.main.update(this.dataPoint(this.bars, this.bars.length - 1));

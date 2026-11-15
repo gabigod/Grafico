@@ -1,6 +1,7 @@
 // Cliente da API v20 da OANDA + gerador de dados de demonstração.
 // No APK o fetch passa pelo HTTP nativo do Capacitor (CapacitorHttp), então não há bloqueio de CORS.
 import { store } from './store.js';
+import { ct, ctReady, key as ckey } from './ctrader.js';
 
 export const TFS = [
   { id: '1',   label: '1m',  gran: 'M1',  sec: 60 },
@@ -20,7 +21,13 @@ export const finerOf = { '5': 'M1', '15': 'M1', '30': 'M5', '60': 'M5', '240': '
 const HOSTS = { practice: 'https://api-fxpractice.oanda.com', live: 'https://api-fxtrade.oanda.com' };
 
 export function cfg() { return store.get('oanda', { token: '', env: 'practice', account: '' }); }
-export function hasOanda() { const c = cfg(); return !!(c.token && c.account); }
+export function provider() { return store.get('provider', 'ctrader'); }
+export function oandaReady() { const c = cfg(); return !!(c.token && c.account); }
+const useCt = () => provider() === 'ctrader' && ctReady();
+const useOanda = () => provider() === 'oanda' && oandaReady();
+// "conectado a uma fonte de preços real"
+export function hasOanda() { return useCt() || useOanda(); }
+export function feedName() { return useCt() ? 'cTrader' : useOanda() ? 'OANDA' : 'Demo'; }
 
 async function api(path, params) {
   const c = cfg();
@@ -57,7 +64,8 @@ function mapCandle(c, gran) {
 }
 
 export async function candles(instrument, gran, { count, from, to } = {}) {
-  if (!hasOanda()) return demoCandles(instrument, gran, { count, to });
+  if (useCt()) return ct.candles(resolveTicker(instrument), gran, { count, from, to });
+  if (!useOanda()) return demoCandles(instrument, gran, { count, to });
   const params = { price: 'M', granularity: gran, dailyAlignment: 17, alignmentTimezone: 'America/New_York' };
   if (from) params.from = from;
   if (to) params.to = to;
@@ -66,8 +74,9 @@ export async function candles(instrument, gran, { count, from, to } = {}) {
   return (r.candles || []).map(c => mapCandle(c, gran));
 }
 
-export async function pricing(instruments) {
-  if (!hasOanda()) return demoPricing(instruments);
+export async function pricing(instruments, live) {
+  if (useCt()) return ct.pricing(instruments.map(resolveTicker), live && { name: resolveTicker(live.name), gran: live.gran });
+  if (!useOanda()) return demoPricing(instruments);
   const r = await api(`/v3/accounts/${cfg().account}/pricing`, { instruments: instruments.join(',') });
   return (r.prices || []).map(p => ({
     instrument: p.instrument, time: parseFloat(p.time),
@@ -79,8 +88,9 @@ export async function pricing(instruments) {
 let instCache = null;
 export async function instruments() {
   if (instCache) return instCache;
+  if (useCt()) { instCache = (await ct.loadSymbols()).map(({ name, display, type, prec, pip }) => ({ name, display, type, prec, pip })); return instCache; }
   const saved = store.get('instruments', null);
-  if (!hasOanda()) { instCache = DEMO_INSTRUMENTS; return instCache; }
+  if (!useOanda()) { instCache = DEMO_INSTRUMENTS; return instCache; }
   try {
     const r = await api(`/v3/accounts/${cfg().account}/instruments`);
     instCache = r.instruments.map(i => ({ name: i.name, display: i.displayName, type: i.type, prec: i.displayPrecision, pip: i.pipLocation }))
@@ -89,18 +99,22 @@ export async function instruments() {
   } catch (e) { if (saved) instCache = saved; else throw e; }
   return instCache;
 }
+function knownList() {
+  if (useCt()) return instCache || ct.cachedSymbols() || [];
+  return instCache || (useOanda() && store.get('instruments', null)) || DEMO_INSTRUMENTS;
+}
 export function instInfo(name) {
-  const list = instCache || store.get('instruments', null) || DEMO_INSTRUMENTS;
+  const list = knownList();
   return list.find(i => i.name === name) || { name, display: name.replace('_', '/'), type: 'CURRENCY', prec: name.includes('JPY') ? 3 : 5, pip: name.includes('JPY') ? -2 : -4 };
 }
 export const short = name => name.replace('_', '');
 export function category(i) {
   const n = i.name;
   if (i.type === 'CURRENCY') return 'Forex';
-  if (/^(XAU|XAG|XPT|XPD|XCU)_/.test(n)) return 'Metais';
-  if (/(WTICO|BCO|NATGAS|CORN|WHEAT|SOYBN|SUGAR)/.test(n)) return 'Commodities';
+  if (/^(XAU|XAG|XPT|XPD|XCU)/.test(n)) return 'Metais';
+  if (/(WTICO|BCO|NATGAS|CORN|WHEAT|SOYBN|SUGAR|OIL|BRENT|WTI|XTI|XBR|XNG)/.test(n)) return 'Commodities';
   if (/(USB|DE10YB|UK10YB|BUND)/.test(n)) return 'Títulos';
-  if (/(BTC|ETH|LTC|BCH)/.test(n)) return 'Cripto';
+  if (/(BTC|ETH|LTC|BCH|XRP|SOL|ADA|DOGE)/.test(n)) return 'Cripto';
   return 'Índices';
 }
 
@@ -111,11 +125,28 @@ const ALIASES = {
   XAUUSD: 'XAU_USD', GOLD: 'XAU_USD', XAGUSD: 'XAG_USD', SILVER: 'XAG_USD', XCUUSD: 'XCU_USD', COPPER: 'XCU_USD',
   USOIL: 'WTICO_USD', WTICOUSD: 'WTICO_USD', OILUSD: 'WTICO_USD', UKOIL: 'BCO_USD', BCOUSD: 'BCO_USD', EU50: 'EU50_EUR', FR40: 'FR40_EUR', AU200: 'AU200_AUD',
 };
+const GROUPS = [
+  ['US30', 'US30USD', 'DJI', 'DJ30', 'WS30', 'USA30', 'DOW', 'WALLSTREET30', 'USWALLST30'], ['NAS100', 'US100', 'NDX', 'USTEC', 'NAS100USD', 'USA100', 'USTECH', 'USTECH100', 'USNAS100'],
+  ['US500', 'SPX500', 'SPX', 'SPX500USD', 'USA500', 'US500USD', 'USSPX500'], ['DE40', 'GER40', 'DE30', 'DAX', 'DE30EUR', 'GERMANY40', 'GER30', 'DE40EUR'],
+  ['UK100', 'UK100GBP', 'FTSE', 'FTSE100'], ['JP225', 'JPN225', 'NI225', 'JP225USD', 'JAPAN225'], ['HK50', 'HK33', 'HK33HKD', 'HSI', 'HONGKONG50'], ['EU50', 'EU50EUR', 'STOXX50', 'EUSTX50'],
+  ['FR40', 'FR40EUR', 'FRA40', 'CAC40', 'FRANCE40'], ['AU200', 'AUS200', 'AU200AUD'],
+  ['XAUUSD', 'GOLD', 'XAUUSD'], ['XAGUSD', 'SILVER'], ['USOIL', 'WTI', 'WTICOUSD', 'XTIUSD', 'OILUSD', 'SPOTCRUDE', 'CRUDEOIL', 'USCRUDE'], ['UKOIL', 'BRENT', 'BCOUSD', 'XBRUSD', 'SPOTBRENT'],
+];
+function resolveCt(t) {
+  const k = ckey(String(t || '').split(':').pop()); if (!k) return t;
+  const list = ct.cachedSymbols() || [];
+  const hit = list.find(s => ckey(s.name) === k); if (hit) return hit.name;
+  const g = GROUPS.find(gr => gr.includes(k));
+  if (g) { const h = list.find(s => g.includes(ckey(s.name))); if (h) return h.name; }
+  const pre = list.find(s => ckey(s.name).startsWith(k) && ckey(s.name).length <= k.length + 2); if (pre) return pre.name;
+  return k;
+}
 export function resolveTicker(t) {
+  if (useCt()) return resolveCt(t);
   let s = String(t || '').split(':').pop().toUpperCase().replace(/[^A-Z0-9_]/g, '');
   if (s.includes('_')) return s;
   if (ALIASES[s]) return ALIASES[s];
-  const list = instCache || store.get('instruments', null) || DEMO_INSTRUMENTS;
+  const list = knownList();
   const hit = list.find(i => i.name.replace('_', '') === s);
   if (hit) return hit.name;
   if (/^[A-Z]{6}$/.test(s)) return s.slice(0, 3) + '_' + s.slice(3);

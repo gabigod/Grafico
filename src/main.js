@@ -4,6 +4,7 @@ import { Drawings, TOOLS, PALETTE } from './drawings.js';
 import { Scripts, BUILTINS } from './scripts.js';
 import { Replay } from './replay.js';
 import * as oanda from './oanda.js';
+import { ct, ctCfg } from './ctrader.js';
 import { store } from './store.js';
 import { PineTS, Indicator } from 'pinets';
 import { App as CapApp } from '@capacitor/app';
@@ -80,6 +81,7 @@ core.on('liveError', e => { if (Date.now() - liveErrShown > 15000) { liveErrShow
 
 async function loadSymbol(instrument, tf = state.tf) {
   if (replay.active) replay.exit();
+  instrument = oanda.resolveTicker(instrument);
   state.instrument = instrument; state.tf = tf; store.set('instrument', instrument); store.set('tf', tf);
   $('#sym-name').textContent = oanda.short(instrument); $('#tf-name').textContent = oanda.tfById(tf).label;
   renderWatch();
@@ -104,11 +106,11 @@ function updateLegend() {
   const b = v[i], pb = v[i - 1]; const prec = oanda.instInfo(core.instrument).prec ?? 5;
   const ch = pb ? b.close - pb.close : 0; const cls = ch >= 0 ? 'up' : 'down';
   const info = oanda.instInfo(core.instrument);
-  let html = `<div class="row"><span class="title">${esc(oanda.short(core.instrument))} · ${esc(core.tf.label)} · OANDA</span>
+  let html = `<div class="row"><span class="title">${esc(oanda.short(core.instrument))} · ${esc(core.tf.label)} · ${oanda.feedName()}</span>
     <span class="k">A</span><span class="v ${cls}">${b.open.toFixed(prec)}</span><span class="k">M</span><span class="v ${cls}">${b.high.toFixed(prec)}</span>
     <span class="k">Mí</span><span class="v ${cls}">${b.low.toFixed(prec)}</span><span class="k">F</span><span class="v ${cls}">${b.close.toFixed(prec)}</span>
     <span class="v ${cls}">${ch >= 0 ? '+' : ''}${ch.toFixed(prec)} (${pb ? (ch / pb.close * 100).toFixed(2) : '0.00'}%)</span></div>`;
-  if (info.display && info.display !== oanda.short(core.instrument)) html = html.replace('· OANDA', `· ${esc(info.display)}`);
+  if (info.display && info.display !== oanda.short(core.instrument)) html = html.replace(`· ${oanda.feedName()}</span>`, `· ${esc(info.display)}</span>`);
   const vals = scripts.valuesAt(i);
   for (const s of scripts.active) {
     const r = vals[s.id]; const name = r?.title || s.name;
@@ -228,7 +230,7 @@ $('#btn-symbol').onclick = async () => {
 // ---------------- timeframe ----------------
 $('#btn-tf').onclick = () => {
   const sh = openModal(head('Timeframe') + `<div class="sh-body"><div class="grid-tf">${oanda.TFS.map(t => `<button data-tf="${t.id}" class="${t.id === state.tf ? 'on' : ''}">${t.label}</button>`).join('')}</div>
-    <p class="hint" style="margin-top:12px">As barras diárias fecham às 17h de Nova York (igual ao TradingView com dados da OANDA).</p></div>`);
+    <p class="hint" style="margin-top:12px">As barras diárias fecham às 17h de Nova York.</p></div>`);
   sh.querySelector('.grid-tf').onclick = e => { const t = e.target.dataset.tf; if (t) { closeModal(); loadSymbol(state.instrument, t); } };
 };
 $('#btn-ctype').onclick = () => {
@@ -285,7 +287,7 @@ function openEditor({ name, source, activeId, libIndex }) {
     const src = ta.value; if (!src.trim()) { sh.querySelector('#ed-err').textContent = 'O script está vazio.'; return false; }
     sh.querySelector('#ed-err').textContent = 'Testando…';
     try {
-      const v = core.view(); const pine = new PineTS(scripts.provider(), 'OANDA:' + oanda.short(core.instrument), core.tf.id, Math.min(v.length, 600));
+      const v = core.view(); const pine = new PineTS(scripts.provider(), oanda.short(core.instrument), core.tf.id, Math.min(v.length, 600));
       await pine.run(new Indicator(src)); sh.querySelector('#ed-err').textContent = ''; return true;
     } catch (e) { sh.querySelector('#ed-err').textContent = 'Erro: ' + (e.message || e); return false; }
   };
@@ -335,8 +337,8 @@ function toggleWatch(n) { state.watch = state.watch.includes(n) ? state.watch.fi
 $('#btn-watch').onclick = () => { const w = $('#watch'); w.hidden = !w.hidden; $('#btn-watch').classList.toggle('on', !w.hidden); store.set('watchOpen', !w.hidden); if (!w.hidden) pollWatch(); setTimeout(() => core.chart.timeScale().applyOptions({}), 0); };
 function renderWatch() {
   const w = $('#watch');
-  const rows = state.watch.map(n => {
-    const p = state.prices[n]; const pc = state.prevClose[n]; const prec = oanda.instInfo(n).prec ?? 5;
+  const rows = state.watch.map(raw => {
+    const n = oanda.resolveTicker(raw); const p = state.prices[n]; const pc = state.prevClose[n]; const prec = oanda.instInfo(n).prec ?? 5;
     const ch = p && pc ? (p.mid - pc) / pc * 100 : null;
     return `<div class="wrow ${n === state.instrument ? 'cur' : ''}" data-n="${n}"><span class="s">${oanda.short(n)}</span><span>${p ? p.mid.toFixed(prec) : '–'}</span><span class="ch ${ch === null ? '' : ch >= 0 ? 'up' : 'down'}">${ch === null ? '' : (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%'}</span></div>`;
   }).join('');
@@ -347,8 +349,9 @@ function renderWatch() {
 async function pollWatch() {
   if ($('#watch').hidden || !state.watch.length) return;
   try {
-    const ps = await oanda.pricing(state.watch); ps.forEach(p => state.prices[p.instrument] = p);
-    const missing = state.watch.filter(n => state.prevClose[n] === undefined);
+    const names = state.watch.map(oanda.resolveTicker);
+    const ps = await oanda.pricing(names); ps.forEach(p => { state.prices[p.instrument] = p; if (p.sessionClose) state.prevClose[p.instrument] = p.sessionClose; });
+    const missing = names.filter(n => state.prevClose[n] === undefined);
     await Promise.all(missing.slice(0, 6).map(async n => { try { const d = await oanda.candles(n, 'D', { count: 2 }); state.prevClose[n] = d.length > 1 ? d[d.length - 2].close : d[0]?.open; } catch { state.prevClose[n] = null; } }));
     renderWatch();
   } catch { /* offline */ }
@@ -358,15 +361,27 @@ setInterval(pollWatch, 3000);
 // ---------------- configurações ----------------
 $('#btn-settings').onclick = openSettings;
 function openSettings() {
-  const c = oanda.cfg(); const tzs = ['America/Sao_Paulo', 'America/Bahia', 'America/New_York', 'Europe/London', 'UTC'];
+  const c = oanda.cfg(); const k = ctCfg(); const prov = oanda.provider(); const tzs = ['America/Sao_Paulo', 'America/Bahia', 'America/New_York', 'Europe/London', 'UTC'];
   const sh = openModal(head('Configurações') + `<div class="sh-body">
-    <div class="sec-t">Conta OANDA</div>
-    <p class="hint">Crie o token em OANDA → Minha conta → "Gerenciar acesso à API". O token fica salvo só neste aparelho.</p>
-    <div class="row2"><label class="fld"><span>Tipo de conta</span><select class="inp" id="s-env"><option value="practice" ${c.env === 'practice' ? 'selected' : ''}>Demo (practice)</option><option value="live" ${c.env === 'live' ? 'selected' : ''}>Real (live)</option></select></label>
-    <label class="fld"><span>Conta</span><select class="inp" id="s-acc">${c.account ? `<option>${esc(c.account)}</option>` : '<option value="">—</option>'}</select></label></div>
-    <label class="fld"><span>Token da API</span><input class="inp" id="s-tok" type="password" value="${esc(c.token)}" placeholder="cole o token aqui" autocomplete="off"></label>
-    <div class="btns" style="justify-content:flex-start"><button class="btn" id="s-test">Conectar</button>${c.token ? '<button class="btn danger" id="s-out">Desconectar</button>' : ''}</div>
-    <div id="s-msg" class="hint">${oanda.hasOanda() ? '<span class="ok">Conectado.</span>' : 'Sem conta conectada: o app está em modo demonstração (preços simulados).'}</div>
+    <div class="sec-t">Fonte de preços</div>
+    <label class="fld"><select class="inp" id="s-prov"><option value="ctrader" ${prov === 'ctrader' ? 'selected' : ''}>cTrader (Open API)</option><option value="oanda" ${prov === 'oanda' ? 'selected' : ''}>OANDA (v20)</option></select></label>
+    <div id="p-ct" ${prov === 'ctrader' ? '' : 'hidden'}>
+      <p class="hint">Dados do app criado em openapi.ctrader.com → Applications. O token e o refresh token saem do botão Playground. Tudo fica salvo só neste aparelho.</p>
+      <div class="row2"><label class="fld"><span>Client ID</span><input class="inp" id="c-id" value="${esc(k.clientId)}" autocomplete="off"></label>
+      <label class="fld"><span>Client Secret</span><input class="inp" id="c-sec" type="password" value="${esc(k.clientSecret)}" autocomplete="off"></label></div>
+      <div class="row2"><label class="fld"><span>Access token</span><input class="inp" id="c-tok" type="password" value="${esc(k.accessToken)}" autocomplete="off"></label>
+      <label class="fld"><span>Refresh token</span><input class="inp" id="c-ref" type="password" value="${esc(k.refreshToken)}" autocomplete="off"></label></div>
+      <label class="fld"><span>Conta</span><select class="inp" id="c-acc">${k.accountId ? `<option value="${esc(k.accountId)}">${esc(k.accountId)}</option>` : '<option value="">— toque em Conectar —</option>'}</select></label>
+      <div class="btns" style="justify-content:flex-start"><button class="btn" id="c-go">Conectar</button>${k.accessToken ? '<button class="btn danger" id="c-out">Desconectar</button>' : ''}</div>
+    </div>
+    <div id="p-oa" ${prov === 'oanda' ? '' : 'hidden'}>
+      <p class="hint">Token criado em OANDA → Minha conta → "Gerenciar acesso à API" (só contas v20). Fica salvo só neste aparelho.</p>
+      <div class="row2"><label class="fld"><span>Tipo de conta</span><select class="inp" id="s-env"><option value="practice" ${c.env === 'practice' ? 'selected' : ''}>Demo (practice)</option><option value="live" ${c.env === 'live' ? 'selected' : ''}>Real (live)</option></select></label>
+      <label class="fld"><span>Conta</span><select class="inp" id="s-acc">${c.account ? `<option>${esc(c.account)}</option>` : '<option value="">—</option>'}</select></label></div>
+      <label class="fld"><span>Token da API</span><input class="inp" id="s-tok" type="password" value="${esc(c.token)}" placeholder="cole o token aqui" autocomplete="off"></label>
+      <div class="btns" style="justify-content:flex-start"><button class="btn" id="s-test">Conectar</button>${c.token ? '<button class="btn danger" id="s-out">Desconectar</button>' : ''}</div>
+    </div>
+    <div id="s-msg" class="hint">${oanda.hasOanda() ? `<span class="ok">Conectado à ${oanda.feedName()}.</span>` : 'Sem conta conectada: o app está em modo demonstração (preços simulados).'}</div>
     <div class="sec-t">Aparência</div>
     <div class="row2"><label class="fld"><span>Tema</span><select class="inp" id="s-theme"><option value="dark" ${core.theme === 'dark' ? 'selected' : ''}>Escuro</option><option value="light" ${core.theme === 'light' ? 'selected' : ''}>Claro</option></select></label>
     <label class="fld"><span>Fuso horário (intraday)</span><select class="inp" id="s-tz">${[...new Set([core.tz, ...tzs])].map(t => `<option ${t === core.tz ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
@@ -374,6 +389,27 @@ function openSettings() {
     <div class="btns" style="justify-content:flex-start"><button class="btn ghost" id="s-exp">Exportar desenhos e scripts</button><button class="btn ghost" id="s-imp">Importar</button></div>
     <p class="hint" style="margin-top:14px">Gráficos por TradingView Lightweight Charts™ · scripts Pine executados com PineTS.</p></div>`);
   const msg = sh.querySelector('#s-msg');
+  sh.querySelector('#s-prov').onchange = e => {
+    const v = e.target.value; sh.querySelector('#p-ct').hidden = v !== 'ctrader'; sh.querySelector('#p-oa').hidden = v !== 'oanda';
+    store.set('provider', v); msg.textContent = 'Fonte alterada. Conecte a conta abaixo (o app recarrega ao conectar).';
+  };
+  sh.querySelector('#c-go').onclick = async () => {
+    const val = id => sh.querySelector(id).value.trim();
+    const conf = { clientId: val('#c-id'), clientSecret: val('#c-sec'), accessToken: val('#c-tok'), refreshToken: val('#c-ref'), accountId: '', isLive: false };
+    if (!conf.clientId || !conf.clientSecret || !conf.accessToken) { msg.innerHTML = '<span class="bad">Preencha Client ID, Client Secret e Access token.</span>'; return; }
+    msg.textContent = 'Conectando à cTrader…';
+    const prev = ctCfg(); store.set('ctrader', conf); ct.close();
+    try {
+      const accs = await ct.login({ accountsOnly: true }); ct.close();
+      if (!accs.length) throw new Error('Nenhuma conta cTrader ligada a esse token.');
+      const sel = sh.querySelector('#c-acc');
+      sel.innerHTML = accs.map(a => `<option value="${a.id}" data-live="${a.isLive ? 1 : 0}">${a.isLive ? 'Real' : 'Demo'} · ${esc(a.broker)} · ${esc(a.login)}</option>`).join('');
+      const save = () => { const o = sel.selectedOptions[0]; store.set('ctrader', { ...ctCfg(), accountId: o.value, isLive: o.dataset.live === '1' }); store.set('provider', 'ctrader'); store.del('ct:symbols'); location.reload(); };
+      sel.onchange = save;
+      if (accs.length === 1) save(); else msg.innerHTML = '<span class="ok">Token OK.</span> Escolha a conta acima.';
+    } catch (e) { ct.close(); store.set('ctrader', prev); msg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  };
+  sh.querySelector('#c-out')?.addEventListener('click', () => { if (confirm('Remover os dados da cTrader deste aparelho?')) { store.del('ctrader'); store.del('ct:symbols'); location.reload(); } });
   sh.querySelector('#s-test').onclick = async () => {
     const tok = sh.querySelector('#s-tok').value.trim(); const env = sh.querySelector('#s-env').value;
     if (!tok) { msg.innerHTML = '<span class="bad">Cole o token primeiro.</span>'; return; }
@@ -382,7 +418,7 @@ function openSettings() {
       const accs = await oanda.testConnection(tok, env);
       if (!accs.length) throw new Error('Nenhuma conta encontrada para esse token.');
       const sel = sh.querySelector('#s-acc'); sel.innerHTML = accs.map(a => `<option>${esc(a.id)}</option>`).join('');
-      const save = () => { store.set('oanda', { token: tok, env, account: sel.value }); store.del('instruments'); location.reload(); };
+      const save = () => { store.set('oanda', { token: tok, env, account: sel.value }); store.set('provider', 'oanda'); store.del('instruments'); location.reload(); };
       sel.onchange = save;
       if (accs.length === 1) save(); else msg.innerHTML = '<span class="ok">Token OK.</span> Escolha a conta acima.';
     } catch (e) { msg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
@@ -391,13 +427,13 @@ function openSettings() {
   sh.querySelector('#s-theme').onchange = e => { core.applyTheme(e.target.value); document.documentElement.dataset.theme = e.target.value; drawings.update(); };
   sh.querySelector('#s-tz').onchange = e => { core.setTz(e.target.value); };
   sh.querySelector('#s-exp').onclick = async () => {
-    const data = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('gfx:') && k !== 'gfx:oanda') data[k] = localStorage.getItem(k); }
+    const data = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('gfx:') && k !== 'gfx:oanda' && k !== 'gfx:ctrader') data[k] = localStorage.getItem(k); }
     const txt = JSON.stringify(data);
     try { await navigator.clipboard.writeText(txt); ui.toast('Backup copiado para a área de transferência'); } catch { prompt('Copie o backup:', txt); }
   };
   sh.querySelector('#s-imp').onclick = () => {
     const txt = prompt('Cole o backup:'); if (!txt) return;
-    try { const d = JSON.parse(txt); Object.entries(d).forEach(([k, v]) => k.startsWith('gfx:') && k !== 'gfx:oanda' && localStorage.setItem(k, v)); location.reload(); } catch { ui.toast('Backup inválido'); }
+    try { const d = JSON.parse(txt); Object.entries(d).forEach(([k, v]) => k.startsWith('gfx:') && k !== 'gfx:oanda' && k !== 'gfx:ctrader' && localStorage.setItem(k, v)); location.reload(); } catch { ui.toast('Backup inválido'); }
   };
 }
 
@@ -405,7 +441,7 @@ function openSettings() {
 renderTools();
 if (store.get('watchOpen', false) && matchMedia('(min-width: 900px)').matches) { $('#watch').hidden = false; $('#btn-watch').classList.add('on'); }
 renderWatch(); pollWatch();
-if (!oanda.hasOanda()) ui.banner('Modo demonstração — conecte sua conta OANDA para preços reais', 'Conectar', () => { ui.banner(null); openSettings(); });
+if (!oanda.hasOanda()) ui.banner('Modo demonstração — conecte sua conta cTrader para preços reais', 'Conectar', () => { ui.banner(null); openSettings(); });
 loadSymbol(state.instrument, state.tf);
 document.addEventListener('visibilitychange', () => { if (document.hidden) core.stopLive(); else if (!replay.active) core.startLive(); });
 // botão voltar do Android: fecha janelas antes de sair do app

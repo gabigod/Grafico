@@ -1,6 +1,6 @@
 # Gráficos FX
 
-Um app Android de gráficos parecido com o TradingView, com preços ao vivo da OANDA.
+Um app Android de gráficos parecido com o TradingView, com preços ao vivo da cTrader (Open API) ou da OANDA (v20).
 
 ## O que o app faz
 
@@ -28,7 +28,14 @@ Um app Android de gráficos parecido com o TradingView, com preços ao vivo da O
 
 O APK é sempre assinado com a mesma chave, que fica em `android/app/graficos-debug.keystore`. Por isso as versões novas instalam por cima da antiga sem apagar seus desenhos e scripts.
 
-## Conectar a OANDA
+## Conectar a cTrader
+
+1. Crie uma conta demo em ct.spotware.com.
+2. Em openapi.ctrader.com → Applications, crie um app e espere ficar ativo.
+3. Copie Client ID e Client Secret; no Playground, gere o Access token e o Refresh token.
+4. No app: ⚙️ → Fonte de preços: cTrader → preencha → Conectar.
+
+## Conectar a OANDA (só contas v20)
 
 No app, vá em ⚙️ → Conta OANDA, cole o token da API e toque em **Conectar**. O token é criado no site da OANDA, em "Gerenciar acesso à API".
 
