@@ -1,0 +1,10 @@
+{
+  "appId": "com.tem.graficosfx",
+  "appName": "Gráficos FX",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false },
+  "plugins": {
+    "CapacitorHttp": { "enabled": true },
+    "SystemBars": { "insetsHandling": "css", "style": "DARK" }
+  }
+}
