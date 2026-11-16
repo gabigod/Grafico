@@ -455,4 +455,30 @@ try {
     else CapApp.minimizeApp();
   });
 } catch { /* navegador */ }
-window.__app = { core, drawings, scripts, replay, loadSymbol };
+// link vindo do Diário de Trades: graficosfx://open?symbol=EURUSD&date=2026-11-12&result=WIN&r=2
+async function openFromLink(url) {
+  try {
+    const u = new URL(url); const q = u.searchParams;
+    const sym = q.get('symbol'); if (!sym) return;
+    await loadSymbol(sym, q.get('tf') || state.tf || 'D');
+    const date = q.get('date'); if (!date) return;
+    const t = Date.parse(date + 'T12:00:00Z') / 1000; if (!isFinite(t)) return;
+    const first = core.bars[0];
+    if (first && t < first.time) { ui.toast('Dia fora do histórico carregado — role para a esquerda'); return; }
+    const l = Math.round(core.timeToLogical(t));
+    core.chart.timeScale().setVisibleLogicalRange({ from: l - 70, to: l + 25 });
+    const bar = core.view()[Math.max(0, Math.min(l, core.view().length - 1))];
+    if (bar) {
+      const res = q.get('result') || ''; const r = q.get('r');
+      const label = `${res}${r ? ' ' + (+r > 0 ? '+' : '') + r + 'R' : ''}`.trim();
+      drawings.items.push({ id: '__trade__', type: 'vline', color: '#ffb84d', width: 1, pts: [{ t: bar.time, p: bar.close }] });
+      if (label) drawings.items.push({ id: '__trade_t__', type: 'text', color: '#ffb84d', width: 2, text: label, pts: [{ t: bar.time, p: bar.high * 1.004 }] });
+      drawings.update(); // marcação temporária: não é salva
+    }
+  } catch { /* link inválido */ }
+}
+try {
+  CapApp.addListener('appUrlOpen', e => openFromLink(e.url));
+  CapApp.getLaunchUrl().then(r => { if (r && r.url) openFromLink(r.url); }).catch(() => { });
+} catch { /* navegador */ }
+window.__app = { core, drawings, scripts, replay, loadSymbol, openFromLink };
