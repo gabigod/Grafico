@@ -35,8 +35,23 @@ export class Drawings {
   }
 
   // ---------- persistência ----------
-  loadFor(instrument) { this.instrument = instrument; this.items = store.get('draw:' + instrument, []); this.sel = null; this.ui.onSelect(null); this.update(); }
-  save() { store.set('draw:' + this.instrument, this.items); }
+  loadFor(instrument) { this.instrument = instrument; this.items = store.get('draw:' + instrument, []); this.sel = null; this.ui.onSelect(null); this.hist = [JSON.stringify(this.items)]; this.hpos = 0; this.update(); this.ui.onHistory?.(); }
+  persistable() { return this.items.filter(i => !String(i.id).startsWith('__')); }
+  save() {
+    const arr = this.persistable(); store.set('draw:' + this.instrument, arr);
+    const snap = JSON.stringify(arr); this.hist ||= [snap]; this.hpos ??= 0;
+    if (this.hist[this.hpos] !== snap) { this.hist = this.hist.slice(0, this.hpos + 1); this.hist.push(snap); if (this.hist.length > 60) this.hist.shift(); this.hpos = this.hist.length - 1; }
+    this.ui.onHistory?.();
+  }
+  canUndo() { return (this.hpos || 0) > 0; }
+  canRedo() { return !!this.hist && this.hpos < this.hist.length - 1; }
+  undo() { if (!this.canUndo()) return; this.hpos--; this.restore(); }
+  redo() { if (!this.canRedo()) return; this.hpos++; this.restore(); }
+  restore() {
+    const keep = this.items.filter(i => String(i.id).startsWith('__'));
+    this.items = JSON.parse(this.hist[this.hpos]).concat(keep); store.set('draw:' + this.instrument, this.persistable());
+    this.sel = null; this.ui.onSelect(null); this.update(); this.ui.onHistory?.();
+  }
   update() { this.requestUpdate?.(); }
   setTool(id) { this.tool = id; this.draft = null; this.ui.onTool(id); if (id !== 'cursor') this.select(null); this.update(); }
   select(it) { this.sel = it; this.ui.onSelect(it); this.update(); }

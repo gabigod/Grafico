@@ -8,7 +8,6 @@ export class Replay {
     if (this.playing) this.pause();
     this.selecting = true; this.active = true; this.core.stopLive();
     this.ui.onReplay();
-    this.ui.banner('Toque no gráfico para escolher onde o replay começa', 'Cancelar', () => this.exit());
   }
   pickAt(x) {
     const hit = this.core.barAtX(x); if (!hit) return false;

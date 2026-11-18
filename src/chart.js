@@ -99,7 +99,7 @@ export class ChartCore {
     this.main.applyOptions({ priceFormat: this.priceFormat() });
     this.chart.applyOptions({ timeScale: { timeVisible: this.tf.sec < 86400 } });
     this.main.setData(this.seriesData(bars));
-    if (!keepRange) this.showLast(120);
+    if (!keepRange) this.showLast(this.defBars());
     this.emit('data', { reset: true });
   }
   // junta barras novas (do fim) com as do cache
@@ -139,11 +139,12 @@ export class ChartCore {
       const shift = fresh.length - cached.length;
       this.bars = fresh; this.main.setData(this.seriesData(fresh));
       if (range && Math.abs(shift) < 50) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + shift, to: range.to + shift });
-      else if (!keepRange) this.showLast(120);
+      else if (!keepRange) this.showLast(this.defBars());
       this.emit('data', { reset: true });
     } else this.applyBars(fresh, { keepRange });
     return this.bars;
   }
+  defBars() { return Math.max(40, Math.min(150, Math.round((this.el.clientWidth || 800) / 7))); }
   showLast(n) {
     const len = this.view().length; if (!len) return;
     this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, len - n), to: len + 6 });
