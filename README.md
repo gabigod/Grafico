@@ -20,9 +20,17 @@ Um app Android de gráficos parecido com o TradingView, com preços ao vivo da c
   - os indicadores, inclusive os de `request.security`, só enxergam o passado
 - **Lista de ativos** com preço e variação do dia, busca por todos os instrumentos da sua conta, tema escuro e claro, e backup de desenhos e scripts.
 
-## Yields (2, 5 e 10 anos)
+## Velocidade
 
-Na busca, categoria **Yields**: US, DE (EUR), GB, JP, AU, CA, CH e NZ, com dados intraday do site da CNBC (não oficial; pode parar se a CNBC mudar o site). Funcionam em `request.security("US10Y", "D", close)` (também aceita `TVC:US10Y`, `EU10Y`, `UK10Y`). Em ⚙️ → Testar yields dá para ver quais estão funcionando.
+As barras ficam em cache no aparelho: ao trocar de ativo ou timeframe o gráfico aparece na hora e só o fim é atualizado. Em segundo plano o app pré-carrega os ativos da lista e os timeframes favoritos.
+
+## Sincronizar entre aparelhos
+
+⚙️ → Sincronizar: cole um token do GitHub com permissão **Gists: Read and write**. Desenhos, scripts, lista de ativos e ajustes ficam num Gist secreto; tokens das corretoras não são enviados.
+
+## Yields (10 anos)
+
+Na busca, categoria **Yields**: 10 anos de US, DE (EUR), GB, JP, AU, CA, CH e NZ, com dados intraday do site da CNBC (não oficial; pode parar se a CNBC mudar o site). Funcionam em `request.security("US10Y", "D", close)` (também aceita `TVC:US10Y`, `EU10Y`, `UK10Y`). Em ⚙️ → Testar yields dá para ver quais estão funcionando.
 
 ## Como gerar o APK (GitHub Actions)
 

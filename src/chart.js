@@ -2,6 +2,7 @@
 import { createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 import * as oanda from './oanda.js';
 import { store } from './store.js';
+import { getBars, putBars } from './barcache.js';
 
 export const THEMES = {
   dark: { bg: '#131722', text: '#d1d4dc', grid: 'rgba(42,46,57,0.55)', border: '#2a2e39', up: '#089981', down: '#f23645', cross: '#9598a1', accent: '#2962ff', muted: '#787b86' },
@@ -15,7 +16,7 @@ export class ChartCore {
     this.tz = store.get('tz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     this.ctype = store.get('ctype', 'candles');
     this.bars = []; this.viewLen = 0; this.instrument = 'EUR_USD'; this.tf = oanda.tfById('D');
-    this.listeners = {}; this.loadingMore = false; this.noMoreHistory = false; this.liveTimer = null; this.lastRefresh = 0;
+    this.listeners = {}; this.loadSeq = 0; this.loadingMore = false; this.noMoreHistory = false; this.liveTimer = null; this.lastRefresh = 0;
     const t = THEMES[this.theme];
     this.chart = createChart(el, {
       autoSize: true,
@@ -92,19 +93,56 @@ export class ChartCore {
   dataPoint(bars, i) { return this.seriesData(this.ctype === 'heikin' ? bars.slice(0, i + 1) : [bars[i]]).at(-1); }
 
   // ---------- carga de dados ----------
-  async load(instrument, tfId, { keepRange } = {}) {
-    this.stopLive();
-    this.instrument = instrument; this.tf = oanda.tfById(tfId);
-    this.noMoreHistory = false; this.viewLen = 0;
-    const count = this.tf.sec >= 86400 ? 2000 : 2500;
-    const bars = await oanda.candles(instrument, this.tf.gran, { count });
+  cacheKey(inst = this.instrument, gran = this.tf.gran) { return `${oanda.feedName()}|${inst}|${gran}`; }
+  applyBars(bars, { keepRange } = {}) {
     this.bars = bars;
     this.main.applyOptions({ priceFormat: this.priceFormat() });
     this.chart.applyOptions({ timeScale: { timeVisible: this.tf.sec < 86400 } });
     this.main.setData(this.seriesData(bars));
     if (!keepRange) this.showLast(120);
     this.emit('data', { reset: true });
-    return bars;
+  }
+  // junta barras novas (do fim) com as do cache
+  static merge(old, fresh) {
+    if (!old.length) return fresh; if (!fresh.length) return old;
+    const f0 = fresh[0].time; const keep = old.filter(b => b.time < f0);
+    return keep.concat(fresh);
+  }
+  // busca só o que falta depois do cache; se o buraco for grande, recarrega
+  static async fetchFresh(instrument, tf, cached) {
+    const last = cached && cached.at(-1);
+    if (last) {
+      const missing = Math.ceil((Date.now() / 1000 - last.ot) / tf.sec) + 3;
+      if (missing <= 1500) {
+        const tail = await oanda.candles(instrument, tf.gran, { count: Math.max(5, missing) });
+        return ChartCore.merge(cached, tail);
+      }
+    }
+    return oanda.candles(instrument, tf.gran, { count: 1000 });
+  }
+  async load(instrument, tfId, { keepRange } = {}) {
+    this.stopLive();
+    const my = ++this.loadSeq;
+    this.instrument = instrument; this.tf = oanda.tfById(tfId);
+    this.noMoreHistory = false; this.viewLen = 0;
+    const key = this.cacheKey(); const tf = this.tf;
+    const rec = await getBars(key);
+    if (my !== this.loadSeq) return this.bars;
+    let cached = rec?.bars ? rec.bars.map(b => ({ ...b })) : null;
+    if (cached?.length) this.applyBars(cached, { keepRange }); // aparece na hora
+    const fresh = await ChartCore.fetchFresh(instrument, tf, cached);
+    if (my !== this.loadSeq) return this.bars;
+    putBars(key, { at: Date.now(), bars: fresh });
+    if (cached?.length) {
+      // mantém a posição do usuário: só troca os dados
+      const range = this.chart.timeScale().getVisibleLogicalRange();
+      const shift = fresh.length - cached.length;
+      this.bars = fresh; this.main.setData(this.seriesData(fresh));
+      if (range && Math.abs(shift) < 50) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + shift, to: range.to + shift });
+      else if (!keepRange) this.showLast(120);
+      this.emit('data', { reset: true });
+    } else this.applyBars(fresh, { keepRange });
+    return this.bars;
   }
   showLast(n) {
     const len = this.view().length; if (!len) return;
@@ -126,6 +164,7 @@ export class ChartCore {
       if (this.viewLen) this.viewLen += older.length;
       this.main.setData(this.seriesData(this.view()));
       if (range) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + older.length, to: range.to + older.length });
+      putBars(this.cacheKey(), { at: Date.now(), bars: this.bars });
       this.emit('data', { prepended: older.length });
     } catch (e) { this.emit('error', e); }
     finally { this.loadingMore = false; }

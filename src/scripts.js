@@ -3,22 +3,13 @@ import { PineTS, Indicator } from 'pinets';
 import { LineSeries, HistogramSeries, AreaSeries, LineStyle, LineType, createSeriesMarkers } from 'lightweight-charts';
 import * as oanda from './oanda.js';
 import { store, uid } from './store.js';
+import { getBars, putBars } from './barcache.js';
 
 const YF = `f(cur) => cur == "USD" ? "US" : cur == "EUR" ? "DE" : cur == "GBP" ? "GB" : cur == "JPY" ? "JP" : cur == "AUD" ? "AU" : cur == "CAD" ? "CA" : cur == "CHF" ? "CH" : cur == "NZD" ? "NZ" : "US"`;
 export const BUILTINS = [
-  { name: 'Curva de juros (2, 5 e 10 anos)', source: `//@version=5
-indicator("Yields 2/5/10", format=format.price, precision=3)
-cur = input.string("USD", "Moeda", options=["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"])
-${YF}
-y2 = request.security(f(cur) + "02Y", "D", close)
-y5 = request.security(f(cur) + "05Y", "D", close)
-y10 = request.security(f(cur) + "10Y", "D", close)
-plot(y2, "2 anos", color=#ff9800, linewidth=2)
-plot(y5, "5 anos", color=#2962ff, linewidth=2)
-plot(y10, "10 anos", color=#00bcd4, linewidth=2)` },
-  { name: 'Spread de yield do par (base − cotada)', source: `//@version=5
+  { name: 'Spread de yield 10 anos do par (base − cotada)', source: `//@version=5
 indicator("Spread de yield", format=format.price, precision=3)
-mat = input.string("10Y", "Vencimento", options=["02Y", "05Y", "10Y"])
+mat = "10Y"
 len = input.int(20, "EMA", minval=1)
 ${YF}
 b = request.security(f(syminfo.basecurrency) + mat, "D", close)
@@ -146,7 +137,15 @@ export class Scripts {
         if (hit && Date.now() - hit.at < 30000) bars = hit.bars;
         else {
           const opts = { count: 2000, to: cut || undefined, chartTimes: tfo.id === core.tf.id ? core.view().map(b => b.time) : undefined };
-          bars = inst === 'DXY' || /DXY$/.test(inst) ? await oanda.dxyCandles(tfo.gran, opts) : await oanda.candles(inst, tfo.gran, opts);
+          const isY = oanda.isYield(inst);
+          if (inst === 'DXY' || /DXY$/.test(inst)) bars = await oanda.dxyCandles(tfo.gran, opts);
+          else if (isY || cut) bars = await oanda.candles(inst, tfo.gran, opts);
+          else {
+            // mesmo cache do gráfico: só busca o que falta
+            const ck = `${oanda.feedName()}|${inst}|${tfo.gran}`; const rec = await getBars(ck);
+            if (rec && Date.now() - rec.at < 30000) bars = rec.bars;
+            else { const { ChartCore } = await import('./chart.js'); bars = await ChartCore.fetchFresh(inst, tfo, rec?.bars); putBars(ck, { at: Date.now(), bars }); }
+          }
           this.cache.set(key, { at: Date.now(), bars });
         }
         if (cut) bars = bars.filter(b => b.ot < cut);

@@ -120,12 +120,23 @@ class CTrader {
     return this.symbols;
   }
   cachedSymbols() { return this.symbols || store.get('ct:symbols', null); }
+  // usa a lista salva na hora e atualiza em segundo plano (evita ~1 s a cada abertura)
+  async needSymbols() {
+    if (this.symbols) return;
+    const c = store.get('ct:symbols', null);
+    if (c?.length) {
+      this.symbols = c; this.byName = new Map(c.map(s => [s.name, s])); this.byId = new Map(c.map(s => [s.id, s]));
+      if (!this.symRefresh) this.symRefresh = setTimeout(() => { const keep = this.symbols; this.symbols = null; this.loadSymbols().catch(() => { this.symbols = keep; }); }, 8000);
+      return;
+    }
+    await this.loadSymbols();
+  }
   sym(name) { const s = this.byName.get(name) || (this.cachedSymbols() || []).find(x => x.name === name); return s; }
 
   // ---------- barras ----------
   async histGap() { const wait = this.lastHist + 230 - Date.now(); if (wait > 0) await new Promise(r => setTimeout(r, wait)); this.lastHist = Date.now(); }
   async candles(name, gran, { count = 500, from, to } = {}) {
-    await this.ensure(); if (!this.symbols) await this.loadSymbols();
+    await this.ensure(); await this.needSymbols();
     const s = this.sym(name); if (!s) throw new Error('Ativo não encontrado na cTrader: ' + name);
     const period = PERIOD[gran]; const win = WINDOW_MS[gran]; const pms = PERIOD_MS[gran];
     let end = to ? to * 1000 : Date.now() + pms; const start = from ? from * 1000 : 0;
@@ -169,7 +180,7 @@ class CTrader {
     }
   }
   async subscribe(names) {
-    await this.ensure(); if (!this.symbols) await this.loadSymbols();
+    await this.ensure(); await this.needSymbols();
     const ids = names.map(n => this.sym(n)?.id).filter(id => id && !this.subscribed.has(id));
     if (!ids.length) return;
     ids.forEach(id => this.subscribed.add(id));

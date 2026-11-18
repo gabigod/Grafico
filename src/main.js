@@ -6,6 +6,8 @@ import { Replay } from './replay.js';
 import * as oanda from './oanda.js';
 import { ct, ctCfg } from './ctrader.js';
 import { store } from './store.js';
+import { getBars, putBars, memFresh } from './barcache.js';
+import * as sync from './sync.js';
 import { PineTS, Indicator } from 'pinets';
 import { App as CapApp } from '@capacitor/app';
 
@@ -71,7 +73,7 @@ const replay = new Replay(core, ui);
 
 let scriptTimer = null;
 function scheduleScripts(delay = 120) { clearTimeout(scriptTimer); scriptTimer = setTimeout(() => scripts.runAll(), delay); }
-core.on('data', () => scheduleScripts(10));
+core.on('data', () => scheduleScripts(80));
 core.on('newBar', () => scheduleScripts(10));
 let lastTickRun = 0;
 core.on('tick', () => { updateLegend(); const now = Date.now(); if (now - lastTickRun > 5000) { lastTickRun = now; scheduleScripts(300); } });
@@ -85,11 +87,38 @@ async function loadSymbol(instrument, tf = state.tf) {
   state.instrument = instrument; state.tf = tf; store.set('instrument', instrument); store.set('tf', tf);
   $('#sym-name').textContent = oanda.short(instrument); $('#tf-name').textContent = oanda.tfById(tf).label;
   renderWatch();
+  if (core.instrument !== instrument || core.tf.id !== tf) { scripts.results = {}; scripts.renderAll(); }
+  drawings.loadFor(instrument);
+  const gen = ++loadGen;
   try {
     await core.load(instrument, tf);
-    drawings.loadFor(instrument); core.startLive();
-  } catch (e) { ui.toast(e.message); }
+    if (gen !== loadGen) return;
+    core.startLive();
+  } catch (e) { if (gen === loadGen) ui.toast(e.message); }
   updateLegend();
+  schedulePrefetch(gen);
+}
+
+// ---------------- pré-carregamento em segundo plano ----------------
+// deixa prontos os outros timeframes do ativo e os ativos da lista, para a troca ser instantânea
+let loadGen = 0, prefetchTimer = null;
+function schedulePrefetch(gen) {
+  clearTimeout(prefetchTimer);
+  prefetchTimer = setTimeout(async () => {
+    const tfs = [...new Set(['D', '240', '60', 'W', ...state.favTfs])];
+    const jobs = [];
+    for (const w of state.watch) { const n = oanda.resolveTicker(w); if (n !== state.instrument) jobs.push([n, state.tf]); }
+    for (const t of tfs) if (t !== state.tf) jobs.push([state.instrument, t]);
+    for (const t of ['D', '240']) for (const w of state.watch) { const n = oanda.resolveTicker(w); if (n !== state.instrument && t !== state.tf) jobs.push([n, t]); }
+    for (const [inst, t] of jobs.slice(0, 40)) {
+      if (gen !== loadGen || document.hidden || replay.active) return;
+      const tfo = oanda.tfById(t); const key = `${oanda.feedName()}|${inst}|${tfo.gran}`;
+      if (memFresh(key, 5 * 60e3)) continue;
+      try { const rec = await getBars(key); const bars = await ChartCore.fetchFresh(inst, tfo, rec?.bars); putBars(key, { at: Date.now(), bars }); }
+      catch { /* sem conexão: tenta depois */ }
+      await new Promise(r => setTimeout(r, 120));
+    }
+  }, 1500);
 }
 
 // ---------------- legenda ----------------
@@ -382,8 +411,16 @@ function openSettings() {
       <div class="btns" style="justify-content:flex-start"><button class="btn" id="s-test">Conectar</button>${c.token ? '<button class="btn danger" id="s-out">Desconectar</button>' : ''}</div>
     </div>
     <div id="s-msg" class="hint">${oanda.hasOanda() ? `<span class="ok">Conectado à ${oanda.feedName()}.</span>` : 'Sem conta conectada: o app está em modo demonstração (preços simulados).'}</div>
+    <div class="sec-t">Sincronizar entre aparelhos</div>
+    <p class="hint">Desenhos, scripts, lista de ativos e ajustes ficam num Gist secreto do seu GitHub. Tokens das corretoras não são enviados.
+    Crie o token em github.com/settings/personal-access-tokens/new → <b>Account permissions → Gists: Read and write</b>. Use o mesmo token nos outros aparelhos.</p>
+    ${sync.enabled() ? `<div class="hint"><span class="ok">Sincronização ligada.</span> Última: ${sync.cfg().last ? new Date(sync.cfg().last).toLocaleString('pt-BR') : '—'}</div>
+      <div class="btns" style="justify-content:flex-start"><button class="btn" id="y-now">Sincronizar agora</button><button class="btn danger" id="y-off">Desligar</button></div>`
+    : `<label class="fld"><span>Token do GitHub</span><input class="inp" id="y-tok" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+      <div class="btns" style="justify-content:flex-start"><button class="btn" id="y-on">Ligar sincronização</button></div>`}
+    <div id="y-msg" class="hint"></div>
     <div class="sec-t">Yields (CNBC)</div>
-    <p class="hint">Yields de 2, 5 e 10 anos vêm do site da CNBC (não oficial). Se pararem de funcionar, teste aqui e mande um print.</p>
+    <p class="hint">Yields de 10 anos vêm do site da CNBC (não oficial). Se pararem de funcionar, teste aqui e mande um print.</p>
     <div class="btns" style="justify-content:flex-start"><button class="btn ghost" id="s-ytest">Testar yields</button></div>
     <div id="s-yres" class="hint"></div>
     <div class="sec-t">Aparência</div>
@@ -428,8 +465,19 @@ function openSettings() {
     } catch (e) { msg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
   };
   sh.querySelector('#s-out')?.addEventListener('click', () => { if (confirm('Remover o token deste aparelho?')) { store.del('oanda'); store.del('instruments'); location.reload(); } });
+  const ymsg = sh.querySelector('#y-msg');
+  sh.querySelector('#y-on')?.addEventListener('click', async () => {
+    const tok = sh.querySelector('#y-tok').value.trim(); if (!tok) { ymsg.innerHTML = '<span class="bad">Cole o token.</span>'; return; }
+    ymsg.textContent = 'Conectando ao GitHub…';
+    try { await sync.connect(tok); closeModal(); ui.toast('Sincronização ligada ✓'); } catch (e) { sync.disconnect(); ymsg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  });
+  sh.querySelector('#y-now')?.addEventListener('click', async () => {
+    ymsg.textContent = 'Sincronizando…';
+    try { const ch = await sync.sync(); ymsg.innerHTML = `<span class="ok">${ch ? 'Atualizado com o outro aparelho.' : 'Tudo em dia.'}</span>`; } catch (e) { ymsg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
+  });
+  sh.querySelector('#y-off')?.addEventListener('click', () => { if (confirm('Desligar a sincronização neste aparelho?')) { sync.disconnect(); closeModal(); ui.toast('Sincronização desligada'); } });
   sh.querySelector('#s-ytest').onclick = async () => {
-    const box = sh.querySelector('#s-yres'); box.textContent = 'Testando os 24 yields…';
+    const box = sh.querySelector('#s-yres'); box.textContent = 'Testando os yields de 10 anos…';
     const { test } = await import('./yields.js');
     const r = await test();
     box.innerHTML = r.map(x => `<div><b>${x.name}</b> <span class="${x.ok ? 'ok' : 'bad'}">${esc(x.info)}</span></div>`).join('');
@@ -491,4 +539,17 @@ try {
   CapApp.addListener('appUrlOpen', e => openFromLink(e.url));
   CapApp.getLaunchUrl().then(r => { if (r && r.url) openFromLink(r.url); }).catch(() => { });
 } catch { /* navegador */ }
+// sincronização: ao abrir, ao voltar para o app e a cada 2 min
+sync.hooks({
+  onRemote: keys => {
+    if (keys.some(k => k === 'draw:' + state.instrument)) drawings.loadFor(state.instrument);
+    if (keys.some(k => k.startsWith('scripts:'))) { scripts.active = store.get('scripts:active', []); scripts.lib = store.get('scripts:lib', []); scripts.runAll(); }
+    if (keys.includes('watch')) { state.watch = store.get('watch', state.watch); renderWatch(); }
+    if (keys.includes('favTfs')) state.favTfs = store.get('favTfs', state.favTfs);
+    ui.toast('Sincronizado com o outro aparelho');
+  },
+});
+const doSync = () => { if (sync.enabled() && !document.hidden) sync.sync().catch(() => { }); };
+setTimeout(doSync, 1500); setInterval(doSync, 120000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) doSync(); });
 window.__app = { core, drawings, scripts, replay, loadSymbol, openFromLink };

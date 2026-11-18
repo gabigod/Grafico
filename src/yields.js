@@ -8,11 +8,11 @@ export const COUNTRIES = {
   JP: { cur: 'JPY', name: 'Japão' }, AU: { cur: 'AUD', name: 'Austrália' }, CA: { cur: 'CAD', name: 'Canadá' },
   CH: { cur: 'CHF', name: 'Suíça' }, NZ: { cur: 'NZD', name: 'Nova Zelândia' },
 };
-const MATS = ['02', '05', '10'];
+const MATS = ['10'];
 export const LIST = Object.entries(COUNTRIES).flatMap(([c, v]) => MATS.map(m => ({
   name: `${c}${m}Y`, display: `${v.name} ${+m} anos (${v.cur})`, type: 'YIELD', prec: 3, pip: -2,
 })));
-export const isYield = n => /^(US|DE|GB|JP|AU|CA|CH|NZ)(02|05|10)Y$/.test(n || '');
+export const isYield = n => /^(US|DE|GB|JP|AU|CA|CH|NZ)10Y$/.test(n || '');
 
 // nomes usados no TradingView → nossos
 export function resolveYield(t) {
