@@ -1,2 +1,9 @@
 import { defineConfig } from 'vite';
-export default defineConfig({ base: './', build: { outDir: 'dist', target: 'es2022', chunkSizeWarningLimit: 4000 } });
+import { viteSingleFile } from 'vite-plugin-singlefile';
+// SINGLE=1 gera um único GraficosFX.html para abrir no PC
+const single = !!process.env.SINGLE;
+export default defineConfig({
+  base: './',
+  plugins: single ? [viteSingleFile()] : [],
+  build: { outDir: single ? 'dist-pc' : 'dist', target: 'es2022', chunkSizeWarningLimit: 4000 },
+});

@@ -10,13 +10,21 @@ export const TOOLS = [
   { id: 'hline', name: 'Linha horizontal', pts: 1, icon: '<path d="M2 12h20"/><circle cx="12" cy="12" r="1.6"/>' },
   { id: 'hray', name: 'Raio horizontal', pts: 1, icon: '<path d="M6 12h16"/><circle cx="6" cy="12" r="1.6"/>' },
   { id: 'vline', name: 'Linha vertical', pts: 1, icon: '<path d="M12 2v20"/><circle cx="12" cy="12" r="1.6"/>' },
+  { id: 'cross', name: 'Linha cruzada', pts: 1, icon: '<path d="M12 2v20M2 12h20"/><circle cx="12" cy="12" r="1.6"/>' },
+  { id: 'arrow', name: 'Seta', pts: 2, icon: '<path d="M4 20L19 5M11 5h8v8"/>' },
+  { id: 'channel', name: 'Canal paralelo', pts: 2, icon: '<path d="M3 15L15 3M9 21L21 9"/><circle cx="3" cy="15" r="1.4"/><circle cx="15" cy="3" r="1.4"/>' },
   { sep: true },
   { id: 'rect', name: 'Retângulo', pts: 2, icon: '<rect x="4" y="6" width="16" height="12" rx="1"/>' },
+  { id: 'ellipse', name: 'Elipse', pts: 2, icon: '<ellipse cx="12" cy="12" rx="9" ry="6"/>' },
+  { id: 'prange', name: 'Intervalo de preço', pts: 2, icon: '<path d="M4 5h16M4 19h16M12 7v10M9 10l3-3 3 3"/>' },
+  { id: 'drange', name: 'Intervalo de datas', pts: 2, icon: '<path d="M5 4v16M19 4v16M7 12h10M14 9l3 3-3 3"/>' },
   { id: 'fib', name: 'Retração de Fibonacci', pts: 2, icon: '<path d="M3 5h18M3 10h18M3 14h18M3 19h18" /><path d="M5 19L19 5" stroke-dasharray="2 2"/>' },
   { id: 'long', name: 'Posição comprada', pts: 1, icon: '<rect x="4" y="4" width="16" height="9" fill="currentColor" fill-opacity=".25"/><rect x="4" y="13" width="16" height="7"/><path d="M4 13h16"/>' },
   { id: 'short', name: 'Posição vendida', pts: 1, icon: '<rect x="4" y="4" width="16" height="7"/><rect x="4" y="11" width="16" height="9" fill="currentColor" fill-opacity=".25"/><path d="M4 11h16"/>' },
   { id: 'measure', name: 'Medir', pts: 2, icon: '<path d="M4 20V8M4 20h12"/><path d="M8 16l10-10M14 6h4v4"/>' },
   { id: 'text', name: 'Texto', pts: 1, icon: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>' },
+  { id: 'plabel', name: 'Etiqueta de preço', pts: 1, icon: '<path d="M3 12l5-6h13v12H8z"/><circle cx="8.5" cy="12" r="1.3"/>' },
+  { id: 'eraser', name: 'Borracha', pts: 0, icon: '<path d="M8 20h12M5 15l9-9 5 5-9 9H8z"/><path d="M10 10l5 5"/>' },
 ];
 export const PALETTE = ['#2962ff', '#f23645', '#089981', '#ff9800', '#9c27b0', '#00bcd4', '#ffeb3b', '#787b86', '#ffffff', '#000000'];
 const FIB = [[0, '#787b86'], [0.236, '#f23645'], [0.382, '#ff9800'], [0.5, '#4caf50'], [0.618, '#089981'], [0.786, '#00bcd4'], [1, '#787b86'], [1.618, '#2962ff']];
@@ -25,7 +33,7 @@ const defColor = { rect: '#2962ff', fib: '#787b86', text: '#d1d4dc', measure: '#
 export class Drawings {
   constructor(core, el, ui) {
     this.core = core; this.el = el; this.ui = ui;
-    this.items = []; this.sel = null; this.tool = 'cursor'; this.magnet = store.get('magnet', true); this.hidden = false;
+    this.items = []; this.sel = null; this.tool = 'cursor'; this.magnetMode = store.get('magnetMode', store.get('magnet', true) ? 'weak' : 'off'); this.hidden = false; this.keep = store.get('keepDrawing', false); this.lockAll = false;
     this.draft = null; this.drag = null; this.capturing = false;
     this.primitive = this.makePrimitive();
     core.on('beforeMainRemove', s => { try { s.detachPrimitive(this.primitive); } catch { /* */ } });
@@ -34,6 +42,9 @@ export class Drawings {
     this.bindEvents();
   }
 
+  get magnet() { return this.magnetMode !== 'off'; }
+  set magnet(v) { this.magnetMode = v ? 'weak' : 'off'; store.set('magnetMode', this.magnetMode); }
+  setMagnet(m) { this.magnetMode = m; store.set('magnetMode', m); }
   // ---------- persistência ----------
   loadFor(instrument) { this.instrument = instrument; this.items = store.get('draw:' + instrument, []); this.sel = null; this.ui.onSelect(null); this.hist = [JSON.stringify(this.items)]; this.hpos = 0; this.update(); this.ui.onHistory?.(); }
   persistable() { return this.items.filter(i => !String(i.id).startsWith('__')); }
@@ -82,7 +93,7 @@ export class Drawings {
       if (hit) {
         const b = hit.bar; let best = p, bd = Infinity;
         for (const v of [b.open, b.high, b.low, b.close]) { const d = Math.abs(this.core.yOf(v) - y); if (d < bd) { bd = d; best = v; } }
-        if (bd < 40) p = best;
+        if (this.magnetMode === 'strong' || bd < 22) p = best;
       }
     }
     return { t, p };
@@ -91,6 +102,7 @@ export class Drawings {
     const pts = it.pts.map(pt => this.P(pt));
     if (it.type === 'hline') return [{ x: this.el.clientWidth / 2, y: pts[0].y }];
     if (it.type === 'vline') return [{ x: pts[0].x, y: this.el.clientHeight / 2 }];
+    if (it.type === 'channel') { const [a, b] = pts; const off = this.chOff(it); return [a, b, { x: (a.x + b.x) / 2, y: this.core.yOf((it.pts[0].p + it.pts[1].p) / 2 + off) }]; }
     if (it.type === 'long' || it.type === 'short') {
       const [e, s, g] = pts; const xm = (e.x + s.x) / 2;
       return [{ x: e.x, y: e.y }, { x: xm, y: s.y }, { x: xm, y: g.y }, { x: s.x, y: e.y }];
@@ -108,18 +120,28 @@ export class Drawings {
     const pts = it.pts.map(pt => this.P(pt)); const [a, b] = pts;
     const seg = (p, q) => { const dx = q.x - p.x, dy = q.y - p.y, L = dx * dx + dy * dy || 1; let u = ((x - p.x) * dx + (y - p.y) * dy) / L; u = Math.max(0, Math.min(1, u)); return Math.hypot(p.x + u * dx - x, p.y + u * dy - y); };
     switch (it.type) {
-      case 'trend': case 'measure': return seg(a, b) < tol;
+      case 'trend': case 'measure': case 'arrow': return seg(a, b) < tol;
+      case 'cross': return Math.abs(a.x - x) < tol || Math.abs(a.y - y) < tol;
+      case 'plabel': return x > a.x - 6 && x < a.x + 90 && Math.abs(a.y - y) < 14;
+      case 'channel': { const [p, q, p2, q2] = this.chLines(it); if (seg(p, q) < tol || seg(p2, q2) < tol) return true;
+        const t = (x - p.x) / ((q.x - p.x) || 1); if (t < 0 || t > 1) return false; const y1 = p.y + t * (q.y - p.y), y2 = p2.y + t * (q2.y - p2.y); return y > Math.min(y1, y2) && y < Math.max(y1, y2); }
       case 'ray': case 'extended': { const [p, q] = this.extend(a, b, it.type === 'extended', W); return seg(p, q) < tol; }
       case 'hline': return Math.abs(a.y - y) < tol;
       case 'hray': return x >= a.x - tol && Math.abs(a.y - y) < tol;
       case 'vline': return Math.abs(a.x - x) < tol;
       case 'text': return Math.abs(a.x - x) < 60 && Math.abs(a.y - y) < 16;
-      case 'rect': case 'fib': case 'long': case 'short': {
+      case 'rect': case 'fib': case 'long': case 'short': case 'ellipse': case 'prange': case 'drange': {
         const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
         return x > Math.min(...xs) - tol && x < Math.max(...xs) + tol && y > Math.min(...ys) - tol && y < Math.max(...ys) + tol;
       }
     }
     return false;
+  }
+  chOff(it) { return it.pts[2] ? it.pts[2].p - it.pts[0].p : 0; }
+  chLines(it) {
+    const [a, b] = it.pts.map(pt => this.P(pt)); const off = this.chOff(it);
+    const a2 = { x: a.x, y: this.core.yOf(it.pts[0].p + off) }, b2 = { x: b.x, y: this.core.yOf(it.pts[1].p + off) };
+    return [a, b, a2, b2];
   }
   extend(a, b, both, W) {
     const dx = b.x - a.x, dy = b.y - a.y; if (Math.abs(dx) < 1e-6) return [a, { x: a.x, y: dy > 0 ? 1e5 : -1e5 }];
@@ -132,6 +154,7 @@ export class Drawings {
   // ---------- criação ----------
   newItem(type, pt) {
     const it = { id: uid(), type, color: defColor[type] || '#2962ff', width: 2, pts: [pt] };
+    if (type === 'plabel') it.color = '#2962ff';
     if (type === 'long' || type === 'short') {
       const v = this.core.view(); const n = v.length; const k = Math.min(14, n);
       let rng = 0; for (let i = n - k; i < n; i++) rng += v[i].high - v[i].low; rng = rng / k || pt.p * 0.005;
@@ -140,7 +163,12 @@ export class Drawings {
     }
     return it;
   }
-  commit(it) { this.items.push(it); this.save(); this.setTool('cursor'); this.select(it); if (it.type === 'text' && !it.text) this.ui.editText(it); }
+  commit(it) {
+    if (it.type === 'channel' && !it.pts[2]) { const a = this.core.yOf(it.pts[0].p); const p2 = this.core.pOfY(a + 50); it.pts[2] = { t: it.pts[0].t, p: p2 ?? it.pts[0].p * 0.995 }; }
+    this.items.push(it); this.save();
+    if (this.keep) this.update(); else { this.setTool('cursor'); this.select(it); }
+    if (it.type === 'text' && !it.text) this.ui.editText(it);
+  }
 
   // ---------- eventos ----------
   bindEvents() {
@@ -153,6 +181,7 @@ export class Drawings {
       const { x, y } = local(e);
       if (x > el.clientWidth - this.core.chart.priceScale('right').width()) return; // escala de preço
       const tool = TOOLS.find(t => t.id === this.tool);
+      if (this.tool === 'eraser') { const h = this.hit(x, y); if (h) { e.stopPropagation(); this.capturing = true; this.remove(h.it); this.endCapture(); } return; }
       if (this.tool !== 'cursor' && !this.hidden) {
         const pt = this.pointAt(x, y); if (!pt) return;
         this.capturing = true; e.stopPropagation();
@@ -165,6 +194,7 @@ export class Drawings {
       if (h) {
         this.capturing = true; e.stopPropagation();
         if (this.sel !== h.it) this.select(h.it);
+        if (h.it.locked || this.lockAll) { this.endCapture(); return; }
         this.drag = { it: h.it, h: h.h, sx: x, sy: y, orig: h.it.pts.map(p => ({ ...p })), moved: false };
         return;
       }
@@ -199,6 +229,9 @@ export class Drawings {
         else if (d.h === 1) it.pts[1].p = pt.p;
         else if (d.h === 2) it.pts[2].p = pt.p;
         else { it.pts[1].t = pt.t; it.pts[2].t = pt.t; }
+      } else if (it.type === 'channel' && d.h === 2) {
+        const [a, b] = it.pts.map(q => this.P(q)); const tt = (x - a.x) / ((b.x - a.x) || 1); const yb = a.y + tt * (b.y - a.y); const pb = this.core.pOfY(yb);
+        if (pb !== null) it.pts[2] = { t: it.pts[0].t, p: it.pts[0].p + (pt.p - pb) };
       } else if (it.type === 'hline') it.pts[0].p = pt.p;
       else if (it.type === 'vline') it.pts[0].t = pt.t;
       else it.pts[d.h] = pt;
@@ -220,7 +253,7 @@ export class Drawings {
     if (this.sel && !this.draft) {
       for (const h of this.handles(this.sel)) {
         ctx.beginPath(); ctx.arc(h.x, h.y, 5.5, 0, Math.PI * 2);
-        ctx.fillStyle = this.core.theme === 'dark' ? '#131722' : '#fff'; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = this.sel.color; ctx.stroke();
+        ctx.fillStyle = this.core.theme === 'dark' ? '#000' : '#fff'; ctx.fill(); ctx.lineWidth = 1.6; ctx.strokeStyle = this.sel.color; ctx.stroke();
       }
     }
     ctx.restore();
@@ -237,7 +270,8 @@ export class Drawings {
     const W = this.el.clientWidth, H = this.el.clientHeight;
     const pts = it.pts.map(pt => this.P(pt)); const [a, b] = pts;
     if (pts.some(p => p.x === null || p.y === null)) return;
-    ctx.strokeStyle = it.color; ctx.lineWidth = it.width; ctx.setLineDash([]);
+    ctx.strokeStyle = it.color; ctx.lineWidth = it.width;
+    const dash = it.style === 'dashed' ? [7, 5] : it.style === 'dotted' ? [2, 4] : []; ctx.setLineDash(dash);
     const line = (p, q) => { ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke(); };
     switch (it.type) {
       case 'trend': line(a, b); break;
@@ -245,6 +279,23 @@ export class Drawings {
       case 'hline': line({ x: 0, y: a.y }, { x: W, y: a.y }); this.label(ctx, this.fmt(it.pts[0].p), W - 4, a.y, it.color, '#fff', 'right'); break;
       case 'hray': line(a, { x: W, y: a.y }); this.label(ctx, this.fmt(it.pts[0].p), W - 4, a.y, it.color, '#fff', 'right'); break;
       case 'vline': line({ x: a.x, y: 0 }, { x: a.x, y: H }); break;
+      case 'cross': line({ x: a.x, y: 0 }, { x: a.x, y: H }); line({ x: 0, y: a.y }, { x: W, y: a.y }); this.label(ctx, this.fmt(it.pts[0].p), W - 4, a.y, it.color, '#fff', 'right'); break;
+      case 'arrow': { line(a, b); const ang = Math.atan2(b.y - a.y, b.x - a.x), L = 10 + it.width * 2; ctx.setLineDash([]); ctx.beginPath(); ctx.moveTo(b.x, b.y);
+        ctx.lineTo(b.x - L * Math.cos(ang - 0.45), b.y - L * Math.sin(ang - 0.45)); ctx.lineTo(b.x - L * Math.cos(ang + 0.45), b.y - L * Math.sin(ang + 0.45)); ctx.closePath(); ctx.fillStyle = it.color; ctx.fill(); break; }
+      case 'channel': { const [p, q, p2, q2] = this.chLines(it); ctx.fillStyle = it.color + '22'; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.lineTo(q2.x, q2.y); ctx.lineTo(p2.x, p2.y); ctx.closePath(); ctx.fill();
+        line(p, q); line(p2, q2); ctx.setLineDash([4, 4]); ctx.lineWidth = 1; line({ x: p.x, y: (p.y + p2.y) / 2 }, { x: q.x, y: (q.y + q2.y) / 2 }); break; }
+      case 'ellipse': { ctx.beginPath(); ctx.ellipse((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(b.x - a.x) / 2, Math.abs(b.y - a.y) / 2, 0, 0, Math.PI * 2); ctx.fillStyle = it.color + '26'; ctx.fill(); ctx.stroke(); break; }
+      case 'prange': { const d = it.pts[1].p - it.pts[0].p; const c = d >= 0 ? '#2962ff' : '#f23645';
+        ctx.fillStyle = c + '22'; ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y)); ctx.strokeStyle = c; ctx.lineWidth = 1;
+        line({ x: a.x, y: a.y }, { x: b.x, y: a.y }); line({ x: a.x, y: b.y }, { x: b.x, y: b.y }); line({ x: (a.x + b.x) / 2, y: a.y }, { x: (a.x + b.x) / 2, y: b.y });
+        this.label(ctx, `${d >= 0 ? '+' : ''}${this.fmt(d)} (${(d / it.pts[0].p * 100).toFixed(2)}%) · ${this.pips(d).toFixed(1)} pips`, (a.x + b.x) / 2, Math.min(a.y, b.y) - 14, c); break; }
+      case 'drange': { const bars = Math.round(this.core.timeToLogical(it.pts[1].t) - this.core.timeToLogical(it.pts[0].t)); const secs = it.pts[1].t - it.pts[0].t; const c = '#2962ff';
+        ctx.fillStyle = c + '22'; ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y)); ctx.strokeStyle = c; ctx.lineWidth = 1;
+        line({ x: a.x, y: a.y }, { x: a.x, y: b.y }); line({ x: b.x, y: a.y }, { x: b.x, y: b.y }); line({ x: a.x, y: (a.y + b.y) / 2 }, { x: b.x, y: (a.y + b.y) / 2 });
+        const dd = Math.abs(secs) / 86400; this.label(ctx, `${bars} barras · ${dd >= 1 ? dd.toFixed(1) + ' dias' : (Math.abs(secs) / 3600).toFixed(1) + ' h'}`, (a.x + b.x) / 2, Math.max(a.y, b.y) + 14, c); break; }
+      case 'plabel': { ctx.font = '600 12px -apple-system, Roboto, sans-serif'; const tx = this.fmt(it.pts[0].p); const w = ctx.measureText(tx).width + 18;
+        ctx.setLineDash([]); ctx.fillStyle = it.color; ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.x + 8, a.y - 11); ctx.lineTo(a.x + w, a.y - 11); ctx.lineTo(a.x + w, a.y + 11); ctx.lineTo(a.x + 8, a.y + 11); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(tx, a.x + 12, a.y + 0.5); break; }
       case 'rect': {
         ctx.fillStyle = it.color + '33'; ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
         ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y)); break;

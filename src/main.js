@@ -19,7 +19,7 @@ const DEFAULT_WATCH = ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'USD_CAD', 'U
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1A', '5A', 'Todos'];
 const SPEEDS = [10, 3, 1, 0.5, 0.3, 0.1];
 const FAV = ['trend', 'hline', 'hray', 'vline', 'fib', 'rect', 'long'];
-const TG = [['cursor', ['cursor']], ['lines', ['trend', 'ray', 'extended', 'hline', 'hray', 'vline']], ['fib', ['fib']], ['shapes', ['rect']], ['pos', ['long', 'short']], ['text', ['text']], ['measure', ['measure']]];
+const TG = [['cursor', ['cursor']], ['lines', ['trend', 'ray', 'extended', 'hline', 'hray', 'vline', 'cross', 'arrow', 'channel']], ['fib', ['fib']], ['shapes', ['rect', 'ellipse']], ['pos', ['long', 'short', 'prange', 'drange']], ['text', ['text', 'plabel']], ['measure', ['measure']]];
 const CAT_ORDER = ['Forex', 'Metais', 'Índices', 'Commodities', 'Cripto', 'Títulos', 'Yields'];
 
 // ---------------- estado ----------------
@@ -133,7 +133,7 @@ async function loadSymbol(instrument, tf = state.tf) {
     if (gen !== loadGen) return;
     core.startLive();
   } catch (e) { if (gen === loadGen) ui.toast(e.message); }
-  updateLegend(); updateCd();
+  updateLegend(); updateCd(); renderAlertLines();
   schedulePrefetch(gen);
 }
 
@@ -163,8 +163,6 @@ let crossIdx = null, legendCollapsed = false;
 let crossT = null;
 core.on('crosshair', p => {
   crossIdx = p && p.logical !== undefined && p.time !== undefined ? Math.round(p.logical) : null; updateLegend();
-  clearTimeout(crossT);
-  if (crossIdx !== null && isMob()) crossT = setTimeout(() => { crossIdx = null; try { core.chart.clearCrosshairPosition(); } catch { /* */ } updateLegend(); }, 2500);
 });
 function fmtVal(v, prec) {
   if (typeof v !== 'number' || !isFinite(v)) return 'n/a';
@@ -224,10 +222,12 @@ const toolSvg = id => `<svg viewBox="0 0 24 24">${toolDef(id).icon}</svg>`;
 function renderTools() {
   const el = $('#tools'); if (!el) return; const last = store.get('toolLast', {});
   el.innerHTML = TG.map(([g, ids]) => {
-    const act = ids.includes(drawings.tool); const cur = act ? drawings.tool : (ids.includes(last[g]) ? last[g] : ids[0]);
+    const act = ids.includes(drawings.tool) || (g === 'cursor' && drawings.tool === 'eraser'); const cur = act && ids.includes(drawings.tool) ? drawings.tool : act ? 'eraser' : (ids.includes(last[g]) ? last[g] : ids[0]);
     return `<button class="tool ${act ? 'on' : ''}" data-g="${g}" title="${esc(toolDef(cur).name)}">${toolSvg(cur)}${ids.length > 1 ? '<i class="tri"></i>' : ''}</button>`;
   }).join('') + `<hr><button class="tool" data-act="zoomin" title="Aproximar">${ICON.zoom}</button><hr>
-    <button class="tool ${drawings.magnet ? 'on' : ''}" data-act="magnet" title="Ímã (gruda no OHLC)">${ICON.magnet}</button>
+    <button class="tool ${drawings.magnet ? 'on' : ''}" data-act="magnet" title="Ímã (${drawings.magnetMode === 'strong' ? 'forte' : drawings.magnetMode === 'weak' ? 'fraco' : 'desligado'})">${ICON.magnet}<i class="tri"></i></button>
+    <button class="tool ${drawings.keep ? 'on' : ''}" data-act="keep" title="Continuar desenhando">${ICON.pencil}</button>
+    <button class="tool ${drawings.lockAll ? 'on' : ''}" data-act="lockall" title="Travar todos os desenhos">${drawings.lockAll ? ICON.lock : ICON.unlock}</button>
     <button class="tool ${drawings.hidden ? 'on' : ''}" data-act="hide" title="Ocultar desenhos">${drawings.hidden ? ICON.eyeOff : ICON.eye}</button><span class="gap"></span>
     <button class="tool" data-act="clear" title="Apagar todos os desenhos">${ICON.trash}</button>`;
 }
@@ -240,18 +240,28 @@ function renderFav() {
 }
 function renderDrawPop(it) {
   const pop = $('#draw-pop'); if (!it) { pop.hidden = true; return; }
-  pop.innerHTML = `<button data-a="color" title="Cor"><span class="sw" style="background:${it.color}"></span></button>
-    <button data-a="width" title="Espessura"><b>${it.width}px</b></button>
-    ${it.type === 'text' ? `<button data-a="text" title="Editar texto">${ICON.edit}</button>` : ''}
+  const st = it.style || 'solid'; const stIcon = { solid: '<path d="M3 12h18"/>', dashed: '<path d="M3 12h4M10 12h4M17 12h4"/>', dotted: '<path d="M3 12h1M8 12h1M13 12h1M18 12h1" stroke-width="2.4"/>' };
+  pop.innerHTML = `<span class="grip" id="dp-grip">${ICON.grip}</span><button data-a="color" title="Cor"><span class="sw" style="background:${it.color}"></span></button>
+    <button data-a="width" title="Espessura"><svg viewBox="0 0 24 24"><path d="M4 12h16" stroke-width="${it.width}"/></svg><small>${it.width}px</small></button>
+    <button data-a="style" title="Estilo da linha"><svg viewBox="0 0 24 24">${stIcon[st]}</svg></button>
+    ${['text', 'plabel'].includes(it.type) ? '' : ''}${it.type === 'text' ? `<button data-a="text" title="Editar texto">${ICON.edit}</button>` : ''}
+    ${['hline', 'hray', 'plabel', 'cross'].includes(it.type) ? `<button data-a="alert" title="Criar alerta nesse preço">${ICON.bell}</button>` : ''}
+    <button data-a="lock" class="${it.locked ? 'on' : ''}" title="${it.locked ? 'Destravar' : 'Travar'}">${it.locked ? ICON.lock : ICON.unlock}</button>
     <button data-a="clone" title="Duplicar"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
     <button data-a="del" title="Apagar">${ICON.trash}</button>`;
-  pop.style.left = '50%'; pop.style.top = 'auto'; pop.style.bottom = '40px'; pop.style.transform = 'translateX(-50%)'; pop.hidden = false;
+  if (!pop.dataset.placed) { pop.style.left = '50%'; pop.style.top = '44px'; pop.style.bottom = 'auto'; pop.style.transform = 'translateX(-50%)'; }
+  pop.hidden = false;
+  if (!pop.dataset.drag) { pop.dataset.drag = 1; makeDraggable(pop, pop.querySelector('#dp-grip'), 'dpPos'); }
+  else { const g = pop.querySelector('#dp-grip'); makeDraggable(pop, g, 'dpPos'); }
   pop.onclick = e => {
     const a = e.target.closest('button')?.dataset.a; if (!a) return;
     if (a === 'del') drawings.remove(it);
     if (a === 'width') { drawings.setStyle({ width: it.width % 4 + 1 }); renderDrawPop(it); }
+    if (a === 'style') { const o = ['solid', 'dashed', 'dotted']; drawings.setStyle({ style: o[(o.indexOf(st) + 1) % 3] }); renderDrawPop(it); }
+    if (a === 'lock') { drawings.setStyle({ locked: !it.locked }); renderDrawPop(it); ui.toast(it.locked ? 'Desenho travado' : 'Desenho destravado'); }
     if (a === 'text') ui.editText(it);
-    if (a === 'clone') { const c = JSON.parse(JSON.stringify(it)); c.id = Math.random().toString(36).slice(2); c.pts.forEach(p => p.p *= 1.001); drawings.items.push(c); drawings.save(); drawings.select(c); }
+    if (a === 'alert') openAlert(it.pts[0].p);
+    if (a === 'clone') { const c = JSON.parse(JSON.stringify(it)); c.id = Math.random().toString(36).slice(2); c.locked = false; c.pts.forEach(p => p.p *= 1.001); drawings.items.push(c); drawings.save(); drawings.select(c); }
     if (a === 'color') {
       pop.innerHTML = PALETTE.map(c => `<button data-c="${c}"><span class="sw" style="background:${c}"></span></button>`).join('');
       pop.onclick = ev => { const c = ev.target.closest('button')?.dataset.c; if (c) { drawings.setStyle({ color: c }); renderDrawPop(it); } };
@@ -275,6 +285,7 @@ function renderTop() {
     <button class="tb ic" data-act="ctype" title="Tipo de gráfico">${ctIcon()}${ICON.chevD}</button>
     <span class="sep"></span>
     <button class="tb" data-act="ind">${ICON.indicators}<span>Indicadores</span></button>
+    <button class="tb" data-act="alert">${ICON.bell}<span>Alerta</span></button>
     <button class="tb ${replay.active ? 'on' : ''}" data-act="replay">${ICON.replay}<span>Replay</span></button>
     <span class="sep"></span>
     <button class="tb ic ${drawings.canUndo() ? '' : 'dis'}" data-act="undo" title="Desfazer">${ICON.undo}</button>
@@ -287,6 +298,7 @@ function renderRbar() {
   const el = $('#rbar'); if (!el) return; const open = !$('#watch').hidden;
   el.innerHTML = `<button class="${open ? 'on' : ''}" data-act="watch" title="Lista de ativos">${ICON.bookmark}</button>
     <button data-act="ind" title="Indicadores e scripts">${ICON.scripts}</button>
+    <button data-act="alerts" title="Alertas">${ICON.bell}</button>
     <button data-act="sync" title="Sincronizar">${ICON.sync}</button>`;
 }
 function renderBot() {
@@ -349,17 +361,21 @@ function setTab(t) {
 function openMDraw() {
   const sh = openModal(head('Ferramentas de desenho') + `<div class="sh-body"><div class="tgrid">${TOOLS.filter(t => !t.sep).map(t => `<button data-tool="${t.id}" class="${drawings.tool === t.id ? 'on' : ''}"><svg viewBox="0 0 24 24">${t.icon}</svg>${esc(t.name)}</button>`).join('')}</div>
     <div class="sec-t">Ajustes</div>
-    <div class="mrow" data-m="magnet">${ICON.magnet}<span>Ímã (gruda no OHLC)</span><span class="r">${drawings.magnet ? 'ligado' : 'desligado'}</span></div>
+    <div class="mrow" data-m="magnetc">${ICON.magnet}<span>Ímã</span><span class="r">${{ off: 'desligado', weak: 'fraco', strong: 'forte' }[drawings.magnetMode]}</span></div>
+    <div class="mrow" data-m="keep">${ICON.pencil}<span>Continuar desenhando</span><span class="r">${drawings.keep ? 'ligado' : 'desligado'}</span></div>
+    <div class="mrow" data-m="lockall">${ICON.lock}<span>Travar todos os desenhos</span><span class="r">${drawings.lockAll ? 'sim' : 'não'}</span></div>
     <div class="mrow" data-m="hide">${ICON.eyeOff}<span>Ocultar desenhos</span><span class="r">${drawings.hidden ? 'sim' : 'não'}</span></div>
     <div class="mrow" data-m="clear">${ICON.trash}<span>Apagar todos os desenhos</span></div></div>`);
   sh.onclick = e => {
     const t = e.target.closest('[data-tool]'); if (t) { closeModal(); drawings.setTool(t.dataset.tool === drawings.tool ? 'cursor' : t.dataset.tool); if (drawings.tool !== 'cursor') ui.toast('Toque no gráfico para desenhar'); return; }
-    const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; closeModal(); ACT[m]?.();
+    const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; closeModal();
+    if (m === 'magnetc') { const o = ['off', 'weak', 'strong']; drawings.setMagnet(o[(o.indexOf(drawings.magnetMode) + 1) % 3]); ui.toast('Ímã: ' + { off: 'desligado', weak: 'fraco', strong: 'forte' }[drawings.magnetMode]); renderTools(); return; }
+    ACT[m]?.();
   };
 }
 function openMMore() {
   const rows = [['tf', ICON.calendar, 'Timeframe', oanda.tfById(state.tf).label], ['ctype', ctIcon(), 'Tipo de gráfico', CTYPES.find(c => c[0] === core.ctype)?.[1]], ['replay', ICON.replay, 'Replay', replay.active ? 'ativo' : ''],
-    ['goto', ICON.calendar, 'Ir para a data', ''], ['range', ICON.zoom, 'Mostrar tudo', ''], ['theme', core.theme === 'dark' ? ICON.sun : ICON.moon, 'Tema claro/escuro', ''], ['sync', ICON.sync, 'Sincronizar agora', ''], ['settings', ICON.gear, 'Configurações', '']];
+    ['alert', ICON.bell, 'Criar alerta', ''], ['alerts', ICON.bell, 'Meus alertas', String(alerts.length || '')], ['goto', ICON.calendar, 'Ir para a data', ''], ['range', ICON.zoom, 'Mostrar tudo', ''], ['theme', core.theme === 'dark' ? ICON.sun : ICON.moon, 'Tema claro/escuro', ''], ['sync', ICON.sync, 'Sincronizar agora', ''], ['settings', ICON.gear, 'Configurações', '']];
   const sh = openModal(head('Mais') + `<div class="sh-body">${rows.map(r => `<div class="mrow" data-m="${r[0]}">${r[1]}<span>${r[2]}</span><span class="r">${esc(r[3] || '')}</span></div>`).join('')}</div>`);
   sh.onclick = e => { const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; closeModal(); if (m === 'range') applyRange('Todos'); else ACT[m]?.(document.body); };
 }
@@ -563,7 +579,8 @@ function openCursorMenu(el) {
   const cur = store.get('cross', 'cross');
   popMenu(el, [{ label: 'Cruz', icon: toolSvg('cursor').replace(/<path[^>]*\/>/, '<path d="M12 4v16M4 12h16"/>'), on: cur === 'cross', onClick: () => { setCross('cross'); drawings.setTool('cursor'); } },
     { label: 'Ponto (gruda no preço)', icon: ICON.magnet, on: cur === 'dot', onClick: () => { setCross('dot'); drawings.setTool('cursor'); } },
-    { label: 'Seta', icon: toolSvg('cursor'), on: cur === 'arrow', onClick: () => { setCross('arrow'); drawings.setTool('cursor'); } }], { side: 'right' });
+    { label: 'Seta', icon: toolSvg('cursor'), on: cur === 'arrow', onClick: () => { setCross('arrow'); drawings.setTool('cursor'); } },
+    { hr: true }, { label: 'Borracha', icon: toolSvg('eraser'), on: drawings.tool === 'eraser', onClick: () => drawings.setTool('eraser') }], { side: 'right' });
 }
 
 // ---------------- ações (cliques nos botões das barras) ----------------
@@ -589,7 +606,11 @@ const ACT = {
   log: () => { const p = core.chart.priceScale('right'); p.applyOptions({ mode: p.options().mode === 1 ? 0 : 1 }); renderBot(); },
   auto: () => { const p = core.chart.priceScale('right'); p.applyOptions({ autoScale: !p.options().autoScale }); renderBot(); },
   zoomin: () => { const ts = core.chart.timeScale(); ts.applyOptions({ barSpacing: Math.min(60, ts.options().barSpacing * 1.4) }); },
-  magnet: () => { drawings.magnet = !drawings.magnet; store.set('magnet', drawings.magnet); renderTools(); ui.toast(drawings.magnet ? 'Ímã ligado' : 'Ímã desligado'); },
+  magnet: el => popMenu(el, [['off', 'Ímã desligado'], ['weak', 'Ímã fraco (gruda perto do OHLC)'], ['strong', 'Ímã forte (sempre gruda)']].map(([m, l]) => ({ label: l, icon: ICON.magnet, on: drawings.magnetMode === m, onClick: () => { drawings.setMagnet(m); renderTools(); } })), { side: isMob() ? 'below' : 'right' }),
+  keep: () => { drawings.keep = !drawings.keep; store.set('keepDrawing', drawings.keep); renderTools(); ui.toast(drawings.keep ? 'Continuar desenhando: ligado' : 'Continuar desenhando: desligado'); },
+  lockall: () => { drawings.lockAll = !drawings.lockAll; renderTools(); ui.toast(drawings.lockAll ? 'Desenhos travados' : 'Desenhos destravados'); },
+  alert: () => openAlert(),
+  alerts: () => openAlertList(),
   hide: () => { drawings.hidden = !drawings.hidden; drawings.update(); renderTools(); },
   clear: () => { if (drawings.items.length && confirm('Apagar todos os desenhos deste ativo?')) drawings.clearAll(); },
   mdraw: () => { if (drawings.tool !== 'cursor') drawings.setTool('cursor'); else openMDraw(); },
@@ -635,6 +656,93 @@ function bindEvents() {
   $('#watch').addEventListener('contextmenu', e => { const r = e.target.closest('.wrow'); if (!r) return; e.preventDefault(); popMenu(r, [{ label: 'Remover da lista', icon: ICON.trash, onClick: () => toggleWatch(r.dataset.n) }]); });
 }
 
+
+// ---------------- alertas de preço ----------------
+let alerts = store.get('alerts', []); const lastPx = {}; let alertLines = [];
+const saveAlerts = () => { store.set('alerts', alerts); renderAlertLines(); };
+const condTxt = { cross: 'cruza', up: 'cruza para cima', down: 'cruza para baixo' };
+function renderAlertLines() {
+  for (const l of alertLines) { try { core.main.removePriceLine(l); } catch { /* */ } } alertLines = [];
+  for (const a of alerts) if (a.active && a.inst === core.instrument) alertLines.push(core.main.createPriceLine({ price: a.price, color: '#ff9800', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '⏰' }));
+}
+core.on('mainSeries', () => { alertLines = []; setTimeout(renderAlertLines, 0); });
+function beep() { try { const ac = new (window.AudioContext || window.webkitAudioContext)(); [0, 0.25, 0.5].forEach(t => { const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = 880; o.connect(g); g.connect(ac.destination); g.gain.setValueAtTime(0.2, ac.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + t + 0.2); o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.22); }); } catch { /* */ } }
+function fireAlert(a, px) {
+  const prec = oanda.instInfo(a.inst).prec ?? 5;
+  const txt = `${oanda.short(a.inst)} ${condTxt[a.cond]} ${a.price.toFixed(prec)}${a.msg ? ' — ' + a.msg : ''}`;
+  a.active = false; a.firedAt = Date.now(); saveAlerts();
+  beep(); try { navigator.vibrate?.([300, 120, 300]); } catch { /* */ }
+  try { if ('Notification' in window && Notification.permission === 'granted') new Notification('Alerta · Gráficos FX', { body: txt }); } catch { /* */ }
+  const sh = openModal(head('⏰ Alerta disparado') + `<div class="sh-body"><p style="font-size:16px;margin:4px 0 10px">${esc(txt)}</p><p class="hint">Preço agora: ${px.toFixed(prec)}</p>
+    <div class="btns"><button class="btn ghost" data-close>Ok</button><button class="btn" id="al-open">Abrir gráfico</button></div></div>`);
+  sh.querySelector('#al-open').onclick = () => { closeModal(); if (isMob()) setTab('chart'); loadSymbol(a.inst); };
+}
+async function checkAlerts() {
+  const act = alerts.filter(a => a.active); if (!act.length) return;
+  const insts = [...new Set(act.map(a => a.inst))]; const px = {};
+  const cur = core.view().at(-1); if (cur && !replay.active) px[core.instrument] = cur.close;
+  const others = insts.filter(i => px[i] === undefined);
+  if (others.length) { try { (await oanda.pricing(others)).forEach(p => { px[p.instrument] = p.mid; }); } catch { /* offline */ } }
+  for (const a of act) {
+    const p = px[a.inst]; if (p === undefined) continue; const prev = lastPx[a.inst + a.id]; lastPx[a.inst + a.id] = p;
+    if (prev === undefined) continue;
+    const up = prev < a.price && p >= a.price, down = prev > a.price && p <= a.price;
+    if ((a.cond === 'cross' && (up || down)) || (a.cond === 'up' && up) || (a.cond === 'down' && down)) fireAlert(a, p);
+  }
+}
+setInterval(checkAlerts, 2000);
+function openAlert(price) {
+  const prec = oanda.instInfo(core.instrument).prec ?? 5; const last = core.view().at(-1);
+  const p0 = price ?? last?.close ?? 0;
+  const sh = openModal(head('Criar alerta · ' + esc(oanda.short(core.instrument))) + `<div class="sh-body">
+    <div class="row2"><label class="fld"><span>Condição</span><select class="inp" id="al-c">${Object.entries(condTxt).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <label class="fld"><span>Preço</span><input class="inp" id="al-p" type="number" step="any" value="${p0.toFixed(prec)}"></label></div>
+    <label class="fld"><span>Mensagem (opcional)</span><input class="inp" id="al-m" placeholder="ex.: tocou a zona de força"></label>
+    <p class="hint">O alerta toca enquanto o app estiver aberto (som, vibração e aviso).</p>
+    <div class="btns"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="al-ok">Criar</button></div></div>`);
+  sh.querySelector('#al-ok').onclick = () => {
+    const pr = parseFloat(sh.querySelector('#al-p').value); if (!isFinite(pr)) return;
+    alerts.push({ id: Math.random().toString(36).slice(2), inst: core.instrument, price: pr, cond: sh.querySelector('#al-c').value, msg: sh.querySelector('#al-m').value.trim(), active: true, created: Date.now() });
+    saveAlerts(); closeModal(); ui.toast('Alerta criado');
+    try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch { /* */ }
+  };
+}
+function openAlertList() {
+  const draw = () => alerts.length ? alerts.map((a, k) => { const prec = oanda.instInfo(a.inst).prec ?? 5; return `<div class="it" data-k="${k}"><div style="display:flex;gap:10px;align-items:center">${symIcon(a.inst, 24)}<div><div class="a">${esc(oanda.short(a.inst))} ${condTxt[a.cond]} ${a.price.toFixed(prec)}</div>
+      <div class="b">${a.active ? '<span class="ok">ativo</span>' : 'disparado ' + (a.firedAt ? new Date(a.firedAt).toLocaleString('pt-BR') : '')}${a.msg ? ' · ' + esc(a.msg) : ''}</div></div></div>
+      <div class="r">${a.active ? '' : '<button data-a="re">Reativar</button>'}<button data-a="del">Apagar</button></div></div>`; }).join('') : '<p class="hint">Nenhum alerta. Crie pelo botão Alerta ou pela linha horizontal.</p>';
+  const sh = openModal(head('Alertas') + `<div class="sh-body"><div class="btns" style="justify-content:flex-start;margin-top:0"><button class="btn" id="al-new">+ Criar alerta</button></div><div class="list" id="al-l">${draw()}</div></div>`);
+  sh.querySelector('#al-new').onclick = () => openAlert();
+  sh.querySelector('#al-l').onclick = e => { const b = e.target.closest('button[data-a]'); if (!b) return; const k = +b.closest('.it').dataset.k;
+    if (b.dataset.a === 'del') alerts.splice(k, 1); else { alerts[k].active = true; delete lastPx[alerts[k].inst + alerts[k].id]; }
+    saveAlerts(); sh.querySelector('#al-l').innerHTML = draw(); };
+}
+
+// ---------------- celular: segurar o dedo mostra a cruz com OHLC (como no TradingView) ----------------
+function bindLongPress() {
+  const el = $('#chart'); let timer = null, start = null, on = false;
+  const setPos = (cx, cy) => {
+    const r = el.getBoundingClientRect(); const x = cx - r.left, y = cy - r.top;
+    const l = core.chart.timeScale().coordinateToLogical(x); const v = core.view(); if (l === null || !v.length) return;
+    const i = Math.max(0, Math.min(v.length - 1, Math.round(l))); const p = core.main.coordinateToPrice(y);
+    core.chart.setCrosshairPosition(p ?? v[i].close, v[i].time, core.main);
+  };
+  const exit = () => { on = false; core.chart.applyOptions({ handleScroll: true, handleScale: true }); try { core.chart.clearCrosshairPosition(); } catch { /* */ } crossIdx = null; updateLegend(); };
+  el.addEventListener('touchstart', e => {
+    if (!isMob() || e.touches.length !== 1 || replay.selecting || drawings.tool !== 'cursor' || drawings.capturing) return;
+    const t = e.touches[0];
+    if (on) { start = { x: t.clientX, y: t.clientY, tap: true }; return; }
+    start = { x: t.clientX, y: t.clientY };
+    clearTimeout(timer); timer = setTimeout(() => { on = true; core.chart.applyOptions({ handleScroll: false, handleScale: false }); setPos(start.x, start.y); try { navigator.vibrate?.(15); } catch { /* */ } }, 450);
+  }, { capture: true, passive: true });
+  el.addEventListener('touchmove', e => {
+    const t = e.touches[0]; if (!t || !start) return;
+    if (on) { start.tap = false; setPos(t.clientX, t.clientY); e.stopPropagation(); return; }
+    if (Math.hypot(t.clientX - start.x, t.clientY - start.y) > 8) clearTimeout(timer);
+  }, { capture: true, passive: true });
+  el.addEventListener('touchend', () => { clearTimeout(timer); if (on && start?.tap) exit(); }, { capture: true, passive: true });
+}
+
 // ---------------- atalhos de teclado (iguais aos do TradingView) ----------------
 document.addEventListener('keydown', e => {
   if (e.target.closest('input, textarea, select') || !$('#modal').hidden) return;
@@ -647,6 +755,8 @@ document.addEventListener('keydown', e => {
     const map = { t: 'trend', h: 'hline', j: 'hray', v: 'vline', f: 'fib' };
     if (map[k]) { e.preventDefault(); toggleTool(map[k]); return; }
     if (k === 'g') { e.preventDefault(); openGoto(); return; }
+    if (k === 'a') { e.preventDefault(); openAlert(); return; }
+    if (k === 'c') { e.preventDefault(); toggleTool('cross'); return; }
     if (k === 'l') { e.preventDefault(); ACT.log(); return; }
     if (k === 'p') { e.preventDefault(); ACT.pct(); return; }
     if (k === 'r') { e.preventDefault(); core.showLast(core.defBars()); return; }
@@ -750,8 +860,24 @@ function openInputs(s) {
   };
   const groups = {}; meta.forEach((m, k) => (groups[m.group || ''] ||= []).push(field(m, k)));
   const body = Object.entries(groups).map(([g, f]) => (g ? `<div class="sec-t">${esc(g)}</div>` : '') + f.join('')).join('') || '<p class="hint">Este script não tem entradas configuráveis.</p>';
-  const sh = openModal(head('Ajustes · ' + esc(s.name)) + `<div class="sh-body">${body}<div class="btns"><button class="btn ghost" id="in-reset">Padrão</button><button class="btn" id="in-ok">Aplicar</button></div></div>`);
-  sh.querySelector('#in-reset').onclick = () => { scripts.setInputs(s.id, {}); closeModal(); };
+  // ---- aba Estilo: cada plot (cor, espessura, estilo, mostrar) ----
+  const plots = Object.entries(scripts.results[s.id]?.ctx?.plots || {}).filter(([t, p]) => !t.startsWith('__') && !['barcolor'].includes(p.options?.style));
+  const sty = s.styles || {};
+  const hexOf = c => { const m = /^#([0-9a-f]{6})/i.exec(String(c || '')); if (m) return '#' + m[1]; const r = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(String(c || '')); return r ? '#' + [r[1], r[2], r[3]].map(x => (+x).toString(16).padStart(2, '0')).join('') : '#2962ff'; };
+  const styleBody = plots.map(([t, p], k) => { const o = sty[t] || {}; return `<div class="strow" data-t="${esc(t)}"><label class="chk" style="margin:0;flex:1"><input type="checkbox" data-sv ${o.hidden ? '' : 'checked'}> ${esc(t)}</label>
+      <input type="color" class="color-in" data-sc value="${o.color || hexOf(p.options?.color)}">
+      <select class="inp" data-sw style="width:64px">${[1, 2, 3, 4].map(w => `<option ${(o.width || p.options?.linewidth || 1) === w ? 'selected' : ''}>${w}</option>`).join('')}</select>
+      <select class="inp" data-ss style="width:96px">${[['solid', 'Sólida'], ['dashed', 'Tracejada'], ['dotted', 'Pontilhada']].map(([v, l]) => `<option value="${v}" ${(o.style || 'solid') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`; }).join('') || '<p class="hint">Rode o indicador uma vez para ver os plots aqui.</p>';
+  // ---- aba Visibilidade: em quais timeframes aparece ----
+  const VG = [['min', 'Minutos'], ['hour', 'Horas'], ['day', 'Dias'], ['week', 'Semanas'], ['month', 'Meses']];
+  const tfs = s.tfs || VG.map(v => v[0]);
+  const visBody = VG.map(([v, l]) => `<label class="chk"><input type="checkbox" data-vis="${v}" ${tfs.includes(v) ? 'checked' : ''}> ${l}</label>`).join('');
+  const sh = openModal(head(esc(s.name)) + `<div class="itabs"><button class="on" data-tab="in">Valores</button><button data-tab="st">Estilo</button><button data-tab="vi">Visibilidade</button></div>
+    <div class="sh-body"><div data-pane="in">${body}</div><div data-pane="st" hidden>${styleBody}</div><div data-pane="vi" hidden>${visBody}</div>
+    <div class="btns"><button class="btn ghost" id="in-reset">Padrões</button><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="in-ok">Ok</button></div></div>`);
+  sh.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModal);
+  sh.querySelector('.itabs').onclick = e => { const t = e.target.closest('[data-tab]')?.dataset.tab; if (!t) return; sh.querySelectorAll('.itabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); sh.querySelectorAll('[data-pane]').forEach(p => p.hidden = p.dataset.pane !== t); };
+  sh.querySelector('#in-reset').onclick = () => { s.styles = {}; s.tfs = null; scripts.setInputs(s.id, {}); closeModal(); };
   sh.querySelector('#in-ok').onclick = () => {
     const out = {};
     sh.querySelectorAll('[data-k]').forEach(el => {
@@ -759,7 +885,20 @@ function openInputs(s) {
       if (m.type === 'int') v = parseInt(v); else if (m.type === 'float' || m.type === 'price') v = parseFloat(v);
       if (v !== m.defval && !(typeof v === 'number' && isNaN(v))) out[key(m)] = v;
     });
-    scripts.setInputs(s.id, out); closeModal();
+    const styles = {};
+    sh.querySelectorAll('.strow').forEach(r => {
+      const t = r.dataset.t; const p = plots.find(x => x[0] === t)?.[1]; const o = {};
+      if (!r.querySelector('[data-sv]').checked) o.hidden = true;
+      const c = r.querySelector('[data-sc]').value; if (c !== hexOf(p?.options?.color)) o.color = c;
+      const w = +r.querySelector('[data-sw]').value; if (w !== (p?.options?.linewidth || 1)) o.width = w;
+      const ss = r.querySelector('[data-ss]').value; if (ss !== 'solid') o.style = ss;
+      if (Object.keys(o).length) styles[t] = o;
+    });
+    s.styles = styles;
+    const vis = [...sh.querySelectorAll('[data-vis]')].filter(x => x.checked).map(x => x.dataset.vis); s.tfs = vis.length === VG.length ? null : vis;
+    const changedIn = JSON.stringify(out) !== JSON.stringify(s.inputs || {});
+    if (changedIn) scripts.setInputs(s.id, out); else { scripts.saveActive(); scripts.renderAll(); }
+    closeModal(); updateLegend();
   };
 }
 
@@ -872,7 +1011,7 @@ function openSettings() {
 
 
 // ---------------- início ----------------
-bindSelect(); bindEvents();
+bindSelect(); bindEvents(); bindLongPress();
 setCross(store.get('cross', 'cross'));
 applyLayout(true);
 pollWatch();

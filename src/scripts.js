@@ -103,7 +103,7 @@ export class Scripts {
     core.on('beforeMainRemove', () => { this.mainMarkers?.detach?.(); this.mainMarkers = null; this.clearRendered(); });
     core.on('mainSeries', () => this.renderAll());
   }
-  saveActive() { store.set('scripts:active', this.active.map(({ id, name, source, inputs, visible }) => ({ id, name, source, inputs, visible }))); }
+  saveActive() { store.set('scripts:active', this.active.map(({ id, name, source, inputs, visible, styles, tfs }) => ({ id, name, source, inputs, visible, styles, tfs }))); }
   saveLib() { store.set('scripts:lib', this.lib); }
 
   add(name, source) { const s = { id: uid(), name, source, inputs: {}, visible: true }; this.active.push(s); this.saveActive(); this.runAll(); return s; }
@@ -191,6 +191,8 @@ export class Scripts {
     let pane = 1;
     for (const s of this.active) {
       const res = this.results[s.id]; if (!res || !res.ctx || !s.visible) continue;
+      if (s.tfs && s.tfs.length < 5) { const sec = this.core.tf.sec; const g = sec < 3600 ? 'min' : sec < 86400 ? 'hour' : sec < 604800 ? 'day' : sec < 2e6 ? 'week' : 'month'; if (!s.tfs.includes(g)) continue; }
+      const ovAll = s.styles || {};
       const ctx = res.ctx; const overlay = !!ctx.indicator?.overlay; const pIdx = overlay ? 0 : pane++;
       const r = { id: s.id, series: [], byTitle: {}, target: null, prim: null, markers: null, overlay };
       const plots = Object.entries(ctx.plots || {});
@@ -198,6 +200,7 @@ export class Scripts {
       const pf = overlay ? this.core.priceFormat() : { type: 'price', precision: 2, minMove: 0.01 };
       for (const [title, p] of plots) {
         if (title.startsWith('__')) continue;
+        const ov = ovAll[title] || {}; if (ov.hidden) continue;
         const style = p.options?.style; const data = p.data || [];
         if (style === 'shape' || style === 'char' || style === 'arrow' || style === 'label') {
           for (const d of data) {
@@ -213,23 +216,24 @@ export class Scripts {
         const vals = data.map(d => d.value);
         const fin = vals.filter(v => typeof v === 'number' && isFinite(v));
         const constant = fin.length > 5 && fin.every(v => v === fin[0]);
-        const baseColor = toRgba(p.options?.color, '#2962ff');
-        const lw = Math.max(1, Math.min(4, p.options?.linewidth || 1));
+        const baseColor = ov.color || toRgba(p.options?.color, '#2962ff');
+        const lw = ov.width || Math.max(1, Math.min(4, p.options?.linewidth || 1));
+        const lsty = ov.style === 'dashed' ? LineStyle.Dashed : ov.style === 'dotted' ? LineStyle.Dotted : null;
         let series, rows;
         if (style === 'style_histogram' || style === 'style_columns') {
           series = chart.addSeries(HistogramSeries, { priceFormat: pf, lastValueVisible: true, priceLineVisible: false, base: 0 }, pIdx);
-          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: toRgba(d.options?.color, baseColor) });
+          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: ov.color || toRgba(d.options?.color, baseColor) });
         } else if (style === 'style_area' || style === 'style_areabr') {
           series = chart.addSeries(AreaSeries, { priceFormat: pf, lineColor: baseColor, topColor: baseColor.replace(/[\d.]+\)$/, '0.3)'), bottomColor: 'rgba(0,0,0,0)', lineWidth: lw, priceLineVisible: false }, pIdx);
           rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value });
         } else {
           const dots = style === 'style_circles' || style === 'style_cross';
           series = chart.addSeries(LineSeries, {
-            priceFormat: pf, color: baseColor, lineWidth: constant ? 1 : lw, lineStyle: constant ? LineStyle.Dashed : LineStyle.Solid,
+            priceFormat: pf, color: baseColor, lineWidth: constant && !ov.width ? 1 : lw, lineStyle: lsty ?? (constant ? LineStyle.Dashed : LineStyle.Solid),
             lineType: style === 'style_stepline' ? LineType.WithSteps : LineType.Simple, lineVisible: !dots, pointMarkersVisible: dots, pointMarkersRadius: dots ? 2 : undefined,
             lastValueVisible: !constant, priceLineVisible: false, crosshairMarkerVisible: !constant, crosshairMarkerRadius: 3,
           }, pIdx);
-          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: d.options && 'color' in d.options ? toRgba(d.options.color) : undefined });
+          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: !ov.color && d.options && 'color' in d.options ? toRgba(d.options.color) : undefined });
         }
         try { series.setData(rows); } catch { series.setData(dedupe(rows)); }
         r.series.push(series); r.byTitle[title] = { series, vals };
