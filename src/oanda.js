@@ -2,6 +2,7 @@
 // No APK o fetch passa pelo HTTP nativo do Capacitor (CapacitorHttp), então não há bloqueio de CORS.
 import { store } from './store.js';
 import { ct, ctReady, key as ckey } from './ctrader.js';
+import * as Y from './yields.js';
 
 export const TFS = [
   { id: '1',   label: '1m',  gran: 'M1',  sec: 60 },
@@ -63,7 +64,8 @@ function mapCandle(c, gran) {
   return { time: normTime(ot, gran), ot, open: +m.o, high: +m.h, low: +m.l, close: +m.c, volume: c.volume, complete: c.complete };
 }
 
-export async function candles(instrument, gran, { count, from, to } = {}) {
+export async function candles(instrument, gran, { count, from, to, chartTimes } = {}) {
+  const yn = Y.resolveYield(instrument); if (yn) return Y.candles(yn, gran, { count, to, chartTimes });
   if (useCt()) return ct.candles(resolveTicker(instrument), gran, { count, from, to });
   if (!useOanda()) return demoCandles(instrument, gran, { count, to });
   const params = { price: 'M', granularity: gran, dailyAlignment: 17, alignmentTimezone: 'America/New_York' };
@@ -74,7 +76,15 @@ export async function candles(instrument, gran, { count, from, to } = {}) {
   return (r.candles || []).map(c => mapCandle(c, gran));
 }
 
-export async function pricing(instruments, live) {
+export async function pricing(all, live) {
+  const ys = all.filter(n => Y.resolveYield(n)); const instruments = all.filter(n => !Y.resolveYield(n));
+  const yp = await Promise.all(ys.map(async n => { try { const s = await Y.series(Y.resolveYield(n)); const l = s.at(-1), p = s.at(-2);
+    return l && { instrument: n, time: l[0], bid: l[1], ask: l[1], mid: l[1], sessionClose: p ? p[1] : undefined, tradeable: false }; } catch { return null; } }));
+  if (live && Y.resolveYield(live.name)) live = null;
+  const rest = instruments.length ? await pricingFx(instruments, live) : [];
+  return [...rest, ...yp.filter(Boolean)];
+}
+async function pricingFx(instruments, live) {
   if (useCt()) return ct.pricing(instruments.map(resolveTicker), live && { name: resolveTicker(live.name), gran: live.gran });
   if (!useOanda()) return demoPricing(instruments);
   const r = await api(`/v3/accounts/${cfg().account}/pricing`, { instruments: instruments.join(',') });
@@ -86,7 +96,8 @@ export async function pricing(instruments, live) {
 }
 
 let instCache = null;
-export async function instruments() {
+export async function instruments() { return [...await instrumentsFx(), ...Y.LIST]; }
+async function instrumentsFx() {
   if (instCache) return instCache;
   if (useCt()) { instCache = (await ct.loadSymbols()).map(({ name, display, type, prec, pip }) => ({ name, display, type, prec, pip })); return instCache; }
   const saved = store.get('instruments', null);
@@ -104,12 +115,15 @@ function knownList() {
   return instCache || (useOanda() && store.get('instruments', null)) || DEMO_INSTRUMENTS;
 }
 export function instInfo(name) {
+  const yn = Y.resolveYield(name); if (yn) return Y.LIST.find(i => i.name === yn);
   const list = knownList();
   return list.find(i => i.name === name) || { name, display: name.replace('_', '/'), type: 'CURRENCY', prec: name.includes('JPY') ? 3 : 5, pip: name.includes('JPY') ? -2 : -4 };
 }
-export const short = name => name.replace('_', '');
+export const short = name => String(name).replace('_', '');
+export const isYield = n => !!Y.resolveYield(n);
 export function category(i) {
   const n = i.name;
+  if (i.type === 'YIELD') return 'Yields';
   if (i.type === 'CURRENCY') return 'Forex';
   if (/^(XAU|XAG|XPT|XPD|XCU)/.test(n)) return 'Metais';
   if (/(WTICO|BCO|NATGAS|CORN|WHEAT|SOYBN|SUGAR|OIL|BRENT|WTI|XTI|XBR|XNG)/.test(n)) return 'Commodities';
@@ -142,6 +156,7 @@ function resolveCt(t) {
   return k;
 }
 export function resolveTicker(t) {
+  const yn = Y.resolveYield(t); if (yn) return yn;
   if (useCt()) return resolveCt(t);
   let s = String(t || '').split(':').pop().toUpperCase().replace(/[^A-Z0-9_]/g, '');
   if (s.includes('_')) return s;

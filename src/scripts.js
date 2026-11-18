@@ -4,7 +4,30 @@ import { LineSeries, HistogramSeries, AreaSeries, LineStyle, LineType, createSer
 import * as oanda from './oanda.js';
 import { store, uid } from './store.js';
 
+const YF = `f(cur) => cur == "USD" ? "US" : cur == "EUR" ? "DE" : cur == "GBP" ? "GB" : cur == "JPY" ? "JP" : cur == "AUD" ? "AU" : cur == "CAD" ? "CA" : cur == "CHF" ? "CH" : cur == "NZD" ? "NZ" : "US"`;
 export const BUILTINS = [
+  { name: 'Curva de juros (2, 5 e 10 anos)', source: `//@version=5
+indicator("Yields 2/5/10", format=format.price, precision=3)
+cur = input.string("USD", "Moeda", options=["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"])
+${YF}
+y2 = request.security(f(cur) + "02Y", "D", close)
+y5 = request.security(f(cur) + "05Y", "D", close)
+y10 = request.security(f(cur) + "10Y", "D", close)
+plot(y2, "2 anos", color=#ff9800, linewidth=2)
+plot(y5, "5 anos", color=#2962ff, linewidth=2)
+plot(y10, "10 anos", color=#00bcd4, linewidth=2)` },
+  { name: 'Spread de yield do par (base − cotada)', source: `//@version=5
+indicator("Spread de yield", format=format.price, precision=3)
+mat = input.string("10Y", "Vencimento", options=["02Y", "05Y", "10Y"])
+len = input.int(20, "EMA", minval=1)
+${YF}
+b = request.security(f(syminfo.basecurrency) + mat, "D", close)
+q = request.security(f(syminfo.currency) + mat, "D", close)
+s = b - q
+e = ta.ema(s, len)
+plot(s, "Spread", color=s >= e ? #089981 : #f23645, linewidth=2)
+plot(e, "EMA", color=#787b86)
+hline(0, "Zero", color=#787b86)` },
   { name: 'Volume', source: `//@version=5
 indicator("Volume", format=format.volume)
 plot(volume, "Volume", style=plot.style_columns, color=close >= open ? color.new(#089981, 50) : color.new(#f23645, 50))
@@ -105,8 +128,9 @@ export class Scripts {
     return {
       configure() { },
       getSymbolInfo: async t => {
-        const name = oanda.resolveTicker(t); const i = oanda.instInfo(name); const prec = i.prec ?? 5; const [base, quote] = name.split('_');
-        return { ticker: oanda.short(name), tickerid: 'OANDA:' + oanda.short(name), description: i.display, type: i.type === 'CURRENCY' ? 'forex' : 'cfd', basecurrency: base, currency: quote || 'USD',
+        const name = oanda.resolveTicker(t); const i = oanda.instInfo(name); const prec = i.prec ?? 5; const kk = name.replace(/[^A-Z]/gi, '').toUpperCase();
+        let [base, quote] = name.split('_'); if (!quote && /^[A-Z]{6}$/.test(kk)) { base = kk.slice(0, 3); quote = kk.slice(3); }
+        return { ticker: oanda.short(name), tickerid: 'OANDA:' + oanda.short(name), description: i.display, type: i.type === 'CURRENCY' ? 'forex' : i.type === 'YIELD' ? 'bond' : 'cfd', basecurrency: base, currency: quote || 'USD',
           mintick: Math.pow(10, -prec), pricescale: Math.pow(10, prec), minmove: 1, pointvalue: 1, timezone: 'America/New_York', session: '24x7', root: base, prefix: 'OANDA', main_tickerid: 'OANDA:' + oanda.short(name) };
       },
       getMarketData: async (ticker, tf, limit, sDate, eDate) => {
@@ -116,12 +140,12 @@ export class Scripts {
           let v = core.view(); if (eDate) v = v.filter(b => b.time * 1000 <= eDate);
           return v.map(b => kl(b, tfo.sec));
         }
-        const key = `${inst}|${tfo.gran}|${cut || ''}`;
+        const key = `${inst}|${tfo.gran}|${cut || ''}|${tfo.sec < 86400 ? core.view().length : ''}`;
         const hit = this.cache.get(key);
         let bars;
         if (hit && Date.now() - hit.at < 30000) bars = hit.bars;
         else {
-          const opts = { count: 2000, to: cut || undefined };
+          const opts = { count: 2000, to: cut || undefined, chartTimes: tfo.id === core.tf.id ? core.view().map(b => b.time) : undefined };
           bars = inst === 'DXY' || /DXY$/.test(inst) ? await oanda.dxyCandles(tfo.gran, opts) : await oanda.candles(inst, tfo.gran, opts);
           this.cache.set(key, { at: Date.now(), bars });
         }

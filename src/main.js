@@ -82,6 +82,7 @@ core.on('liveError', e => { if (Date.now() - liveErrShown > 15000) { liveErrShow
 async function loadSymbol(instrument, tf = state.tf) {
   if (replay.active) replay.exit();
   instrument = oanda.resolveTicker(instrument);
+  if (oanda.isYield(instrument) && oanda.tfById(tf).sec < 86400) { tf = 'D'; ui.toast('Yields são diários: mostrando no 1D'); }
   state.instrument = instrument; state.tf = tf; store.set('instrument', instrument); store.set('tf', tf);
   $('#sym-name').textContent = oanda.short(instrument); $('#tf-name').textContent = oanda.tfById(tf).label;
   renderWatch();
@@ -98,7 +99,7 @@ core.on('crosshair', p => { crossIdx = p && p.logical !== undefined && p.time !=
 function fmtVal(v, prec) {
   if (typeof v !== 'number' || !isFinite(v)) return 'n/a';
   const a = Math.abs(v); if (a >= 1e6) return (v / 1e6).toFixed(2) + 'M'; if (a >= 1e4) return (v / 1e3).toFixed(1) + 'K';
-  return v.toFixed(prec ?? (a < 10 ? 5 : 2));
+  return v.toFixed(prec ?? (a < 0.01 ? 5 : a < 100 ? 3 : 2));
 }
 function updateLegend() {
   const v = core.view(); if (!v.length) return;

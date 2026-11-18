@@ -20,6 +20,10 @@ Um app Android de gráficos parecido com o TradingView, com preços ao vivo da c
   - os indicadores, inclusive os de `request.security`, só enxergam o passado
 - **Lista de ativos** com preço e variação do dia, busca por todos os instrumentos da sua conta, tema escuro e claro, e backup de desenhos e scripts.
 
+## Yields (2, 5 e 10 anos)
+
+Na busca, categoria **Yields**: US, DE (EUR), GB, JP, AU, CA, CH e NZ, de fontes oficiais grátis (FRED, Bundesbank, Banco da Inglaterra, MOF Japão, RBA, Banco do Canadá, SNB). São valores diários de fechamento. Funcionam em `request.security("US10Y", "D", close)` (também aceita `TVC:US10Y`, `EU10Y`, `UK10Y`). Limites: GB sem 2 anos; CH com até ~1 mês de atraso; NZ só 10 anos mensal.
+
 ## Como gerar o APK (GitHub Actions)
 
 1. Crie um repositório no GitHub e envie esta pasta para ele (branch `main`).
