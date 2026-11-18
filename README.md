@@ -22,7 +22,7 @@ Um app Android de gráficos parecido com o TradingView, com preços ao vivo da c
 
 ## Yields (2, 5 e 10 anos)
 
-Na busca, categoria **Yields**: US, DE (EUR), GB, JP, AU, CA, CH e NZ, de fontes oficiais grátis (FRED, Bundesbank, Banco da Inglaterra, MOF Japão, RBA, Banco do Canadá, SNB). São valores diários de fechamento. Funcionam em `request.security("US10Y", "D", close)` (também aceita `TVC:US10Y`, `EU10Y`, `UK10Y`). Limites: GB sem 2 anos; CH com até ~1 mês de atraso; NZ só 10 anos mensal.
+Na busca, categoria **Yields**: US, DE (EUR), GB, JP, AU, CA, CH e NZ, com dados intraday do site da CNBC (não oficial; pode parar se a CNBC mudar o site). Funcionam em `request.security("US10Y", "D", close)` (também aceita `TVC:US10Y`, `EU10Y`, `UK10Y`). Em ⚙️ → Testar yields dá para ver quais estão funcionando.
 
 ## Como gerar o APK (GitHub Actions)
 

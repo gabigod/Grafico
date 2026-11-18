@@ -82,7 +82,6 @@ core.on('liveError', e => { if (Date.now() - liveErrShown > 15000) { liveErrShow
 async function loadSymbol(instrument, tf = state.tf) {
   if (replay.active) replay.exit();
   instrument = oanda.resolveTicker(instrument);
-  if (oanda.isYield(instrument) && oanda.tfById(tf).sec < 86400) { tf = 'D'; ui.toast('Yields são diários: mostrando no 1D'); }
   state.instrument = instrument; state.tf = tf; store.set('instrument', instrument); store.set('tf', tf);
   $('#sym-name').textContent = oanda.short(instrument); $('#tf-name').textContent = oanda.tfById(tf).label;
   renderWatch();
@@ -383,6 +382,10 @@ function openSettings() {
       <div class="btns" style="justify-content:flex-start"><button class="btn" id="s-test">Conectar</button>${c.token ? '<button class="btn danger" id="s-out">Desconectar</button>' : ''}</div>
     </div>
     <div id="s-msg" class="hint">${oanda.hasOanda() ? `<span class="ok">Conectado à ${oanda.feedName()}.</span>` : 'Sem conta conectada: o app está em modo demonstração (preços simulados).'}</div>
+    <div class="sec-t">Yields (CNBC)</div>
+    <p class="hint">Yields de 2, 5 e 10 anos vêm do site da CNBC (não oficial). Se pararem de funcionar, teste aqui e mande um print.</p>
+    <div class="btns" style="justify-content:flex-start"><button class="btn ghost" id="s-ytest">Testar yields</button></div>
+    <div id="s-yres" class="hint"></div>
     <div class="sec-t">Aparência</div>
     <div class="row2"><label class="fld"><span>Tema</span><select class="inp" id="s-theme"><option value="dark" ${core.theme === 'dark' ? 'selected' : ''}>Escuro</option><option value="light" ${core.theme === 'light' ? 'selected' : ''}>Claro</option></select></label>
     <label class="fld"><span>Fuso horário (intraday)</span><select class="inp" id="s-tz">${[...new Set([core.tz, ...tzs])].map(t => `<option ${t === core.tz ? 'selected' : ''}>${t}</option>`).join('')}</select></label></div>
@@ -425,6 +428,12 @@ function openSettings() {
     } catch (e) { msg.innerHTML = `<span class="bad">${esc(e.message)}</span>`; }
   };
   sh.querySelector('#s-out')?.addEventListener('click', () => { if (confirm('Remover o token deste aparelho?')) { store.del('oanda'); store.del('instruments'); location.reload(); } });
+  sh.querySelector('#s-ytest').onclick = async () => {
+    const box = sh.querySelector('#s-yres'); box.textContent = 'Testando os 24 yields…';
+    const { test } = await import('./yields.js');
+    const r = await test();
+    box.innerHTML = r.map(x => `<div><b>${x.name}</b> <span class="${x.ok ? 'ok' : 'bad'}">${esc(x.info)}</span></div>`).join('');
+  };
   sh.querySelector('#s-theme').onchange = e => { core.applyTheme(e.target.value); document.documentElement.dataset.theme = e.target.value; drawings.update(); };
   sh.querySelector('#s-tz').onchange = e => { core.setTz(e.target.value); };
   sh.querySelector('#s-exp').onclick = async () => {

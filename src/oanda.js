@@ -78,11 +78,10 @@ export async function candles(instrument, gran, { count, from, to, chartTimes } 
 
 export async function pricing(all, live) {
   const ys = all.filter(n => Y.resolveYield(n)); const instruments = all.filter(n => !Y.resolveYield(n));
-  const yp = await Promise.all(ys.map(async n => { try { const s = await Y.series(Y.resolveYield(n)); const l = s.at(-1), p = s.at(-2);
-    return l && { instrument: n, time: l[0], bid: l[1], ask: l[1], mid: l[1], sessionClose: p ? p[1] : undefined, tradeable: false }; } catch { return null; } }));
+  let yp = []; if (ys.length) { try { yp = await Y.quotes(ys.map(Y.resolveYield)); yp.forEach((q, i) => { const k = ys.find(n => Y.resolveYield(n) === q.instrument); if (k) q.instrument = k; }); } catch { yp = []; } }
   if (live && Y.resolveYield(live.name)) live = null;
   const rest = instruments.length ? await pricingFx(instruments, live) : [];
-  return [...rest, ...yp.filter(Boolean)];
+  return [...rest, ...yp];
 }
 async function pricingFx(instruments, live) {
   if (useCt()) return ct.pricing(instruments.map(resolveTicker), live && { name: resolveTicker(live.name), gran: live.gran });
