@@ -5,8 +5,8 @@ import { store } from './store.js';
 import { getBars, putBars } from './barcache.js';
 
 export const THEMES = {
-  dark: { bg: '#131722', text: '#d1d4dc', grid: 'rgba(42,46,57,0.55)', border: '#2a2e39', up: '#089981', down: '#f23645', cross: '#9598a1', accent: '#2962ff', muted: '#787b86' },
-  light: { bg: '#ffffff', text: '#131722', grid: 'rgba(42,46,57,0.06)', border: '#e0e3eb', up: '#089981', down: '#f23645', cross: '#9598a1', accent: '#2962ff', muted: '#787b86' },
+  dark: { bg: '#000000', text: '#b2b5be', grid: 'rgba(0,0,0,0)', border: '#242528', up: '#089981', down: '#f23645', cross: '#787b86', crossLabel: '#3c3e43', accent: '#2962ff', muted: '#787b86' },
+  light: { bg: '#ffffff', text: '#131722', grid: 'rgba(42,46,57,0.06)', border: '#e0e3eb', up: '#089981', down: '#f23645', cross: '#9598a1', crossLabel: '#363a45', accent: '#2962ff', muted: '#787b86' },
 };
 
 export class ChartCore {
@@ -20,9 +20,9 @@ export class ChartCore {
     const t = THEMES[this.theme];
     this.chart = createChart(el, {
       autoSize: true,
-      layout: { background: { color: t.bg }, textColor: t.text, fontSize: 11, attributionLogo: true, panes: { separatorColor: t.border, separatorHoverColor: 'rgba(41,98,255,0.3)', enableResize: true } },
-      grid: { vertLines: { color: t.grid }, horzLines: { color: t.grid } },
-      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: t.cross, labelBackgroundColor: '#363a45', style: LineStyle.Dashed }, horzLine: { color: t.cross, labelBackgroundColor: '#363a45', style: LineStyle.Dashed } },
+      layout: { background: { type: 'solid', color: t.bg }, textColor: t.text, fontSize: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif", attributionLogo: true, panes: { separatorColor: t.border, separatorHoverColor: 'rgba(41,98,255,0.3)', enableResize: true } },
+      grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+      crosshair: { mode: CrosshairMode.Normal, vertLine: { color: t.cross, width: 1, labelBackgroundColor: t.crossLabel, style: LineStyle.Dashed }, horzLine: { color: t.cross, width: 1, labelBackgroundColor: t.crossLabel, style: LineStyle.Dashed } },
       rightPriceScale: { borderColor: t.border, scaleMargins: { top: 0.12, bottom: 0.08 } },
       timeScale: { borderColor: t.border, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 7, minBarSpacing: 0.5 },
       localization: { locale: 'pt-BR', timeFormatter: ts => this.fmtTime(ts, true) },
@@ -71,7 +71,8 @@ export class ChartCore {
   setChartType(type) { this.ctype = type; store.set('ctype', type); this.makeMainSeries(); }
   applyTheme(theme) {
     this.theme = theme; store.set('theme', theme); const t = THEMES[theme];
-    this.chart.applyOptions({ layout: { background: { color: t.bg }, textColor: t.text, panes: { separatorColor: t.border } }, grid: { vertLines: { color: t.grid }, horzLines: { color: t.grid } },
+    this.chart.applyOptions({ layout: { background: { color: t.bg }, textColor: t.text, panes: { separatorColor: t.border } }, grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+      crosshair: { vertLine: { color: t.cross, labelBackgroundColor: t.crossLabel }, horzLine: { color: t.cross, labelBackgroundColor: t.crossLabel } },
       rightPriceScale: { borderColor: t.border }, timeScale: { borderColor: t.border } });
     this.makeMainSeries();
   }
@@ -115,10 +116,18 @@ export class ChartCore {
       const missing = Math.ceil((Date.now() / 1000 - last.ot) / tf.sec) + 3;
       if (missing <= 1500) {
         const tail = await oanda.candles(instrument, tf.gran, { count: Math.max(5, missing) });
-        return ChartCore.merge(cached, tail);
+        const merged = ChartCore.merge(cached, tail);
+        if (!ChartCore.hasHole(merged, tf)) return merged;
       }
     }
-    return oanda.candles(instrument, tf.gran, { count: 1000 });
+    const full = await oanda.candles(instrument, tf.gran, { count: 1000 });
+    return full;
+  }
+  // detecta buracos grandes (ex.: cache velho + barras novas)
+  static hasHole(bars, tf) {
+    const lim = Math.max(tf.sec * 12, 10 * 86400);
+    for (let i = Math.max(1, bars.length - 600); i < bars.length; i++) if (bars[i].time - bars[i - 1].time > lim) return true;
+    return false;
   }
   async load(instrument, tfId, { keepRange } = {}) {
     this.stopLive();

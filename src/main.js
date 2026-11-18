@@ -17,7 +17,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const CTYPES = [['candles', 'Candles'], ['hollow', 'Candles vazados'], ['heikin', 'Heikin Ashi'], ['bars', 'Barras'], ['line', 'Linha'], ['area', 'Área']];
 const DEFAULT_WATCH = ['EUR_USD', 'GBP_USD', 'USD_JPY', 'AUD_USD', 'USD_CAD', 'USD_CHF', 'NZD_USD', 'GBP_JPY', 'XAU_USD', 'US30_USD', 'NAS100_USD', 'SPX500_USD'];
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1A', '5A', 'Todos'];
-const SPEEDS = [10, 7, 5, 3, 1, 0.5, 0.3, 0.1];
+const SPEEDS = [10, 3, 1, 0.5, 0.3, 0.1];
 const FAV = ['trend', 'hline', 'hray', 'vline', 'fib', 'rect', 'long'];
 const TG = [['cursor', ['cursor']], ['lines', ['trend', 'ray', 'extended', 'hline', 'hray', 'vline']], ['fib', ['fib']], ['shapes', ['rect']], ['pos', ['long', 'short']], ['text', ['text']], ['measure', ['measure']]];
 const CAT_ORDER = ['Forex', 'Metais', 'Índices', 'Commodities', 'Cripto', 'Títulos', 'Yields'];
@@ -209,7 +209,7 @@ function updateCd() {
   if (!v.length || replay.active || !core.main) { cd.hidden = true; return; }
   const last = v.at(-1); const y = core.main.priceToCoordinate(last.close);
   if (y === null || y === undefined) { cd.hidden = true; return; }
-  const rem = Math.max(0, (last.time + core.tf.sec) * 1000 - Date.now()) / 1000;
+  const rem = Math.max(0, ((last.ot ?? last.time) + core.tf.sec) * 1000 - Date.now()) / 1000;
   const d = Math.floor(rem / 86400), h = Math.floor(rem % 86400 / 3600), m = Math.floor(rem % 3600 / 60), s = Math.floor(rem % 60);
   const p2 = n => String(n).padStart(2, '0');
   cd.textContent = d ? `${d}d ${p2(h)}h` : `${p2(h)}:${p2(m)}:${p2(s)}`;
@@ -393,7 +393,7 @@ function replayAct(a, el) {
     { label: 'Ir para a data…', icon: ICON.calendar, onClick: () => openReplayDate() }], { side: isMob() ? 'above' : 'below' });
   if (a === 'play') replay.playing ? replay.pause() : replay.play();
   if (a === 'step') { replay.pause(); replay.step(1); }
-  if (a === 'speed') popMenu(el, SPEEDS.map(s => ({ label: `${s}x`, on: s === replay.speed, icon: '', right: `${(1 / s).toFixed(1)}s`, onClick: () => { replay.setSpeed(s); renderReplayBar(); } })), { side: 'above' });
+  if (a === 'speed') popMenu(el, SPEEDS.map(s => ({ label: `${s}x`, on: s === replay.speed, icon: '', right: s >= 1 ? `${s}/s` : `1 a cada ${Math.round(1 / s)}s`, onClick: () => { replay.setSpeed(s); renderReplayBar(); } })), { side: 'above' });
   if (a === 'tf') ui.toast('Saia do replay para trocar o timeframe');
   if (a === 'jump' || a === 'exit') replay.exit();
   if (a === 'gear') openSettings();
@@ -634,6 +634,28 @@ function bindEvents() {
   });
   $('#watch').addEventListener('contextmenu', e => { const r = e.target.closest('.wrow'); if (!r) return; e.preventDefault(); popMenu(r, [{ label: 'Remover da lista', icon: ICON.trash, onClick: () => toggleWatch(r.dataset.n) }]); });
 }
+
+// ---------------- atalhos de teclado (iguais aos do TradingView) ----------------
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input, textarea, select') || !$('#modal').hidden) return;
+  const k = e.key.toLowerCase();
+  if (e.shiftKey && e.key === 'ArrowDown' && replay.active) { e.preventDefault(); replay.playing ? replay.pause() : replay.play(); return; }
+  if (e.shiftKey && e.key === 'ArrowRight' && replay.active) { e.preventDefault(); replay.pause(); replay.step(1); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); drawings.undo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'y') { e.preventDefault(); drawings.redo(); return; }
+  if (e.altKey && !e.ctrlKey) {
+    const map = { t: 'trend', h: 'hline', j: 'hray', v: 'vline', f: 'fib' };
+    if (map[k]) { e.preventDefault(); toggleTool(map[k]); return; }
+    if (k === 'g') { e.preventDefault(); openGoto(); return; }
+    if (k === 'l') { e.preventDefault(); ACT.log(); return; }
+    if (k === 'p') { e.preventDefault(); ACT.pct(); return; }
+    if (k === 'r') { e.preventDefault(); core.showLast(core.defBars()); return; }
+  }
+  if (e.key === 'Escape') { if (replay.selecting) replay.exit(); else if (drawings.sel) drawings.select(null); else drawings.setTool('cursor'); return; }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && drawings.sel) { drawings.remove(drawings.sel); return; }
+  if (e.key === '/') { e.preventDefault(); openIndicators(); return; }
+  if (/^[a-z0-9]$/i.test(e.key) && !e.ctrlKey && !e.altKey && !e.metaKey) { openSymbol(); setTimeout(() => { const q = $('#q'); if (q) { q.value = e.key.toUpperCase(); q.dispatchEvent(new Event('input')); } }, 80); }
+});
 
 // ---------------- layout (PC deitado / celular em pé) ----------------
 function syncChrome() { renderTop(); renderMBot(); renderMTabs(); renderRbar(); updateUndo(); }

@@ -3,7 +3,7 @@ const mem = new Map();
 let dbp = null;
 function db() {
   if (!dbp) dbp = new Promise((res, rej) => {
-    const r = indexedDB.open('gfx-bars', 1);
+    const r = indexedDB.open('gfx-bars2', 1);
     r.onupgradeneeded = () => r.result.createObjectStore('b');
     r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
   }).catch(() => null);

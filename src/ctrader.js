@@ -141,12 +141,16 @@ class CTrader {
     const period = PERIOD[gran]; const win = WINDOW_MS[gran]; const pms = PERIOD_MS[gran];
     let end = to ? to * 1000 : Date.now() + pms; const start = from ? from * 1000 : 0;
     const out = new Map(); let empty = 0;
-    for (let k = 0; k < 12 && out.size < count && end > start; k++) {
-      const begin = Math.max(start, end - win);
+    for (let k = 0; k < 40 && out.size < count && end > start; k++) {
+      // a cTrader devolve as barras MAIS ANTIGAS da janela quando há mais que "count";
+      // por isso a janela é do tamanho do que falta (com folga para fins de semana) e nunca passa de ~4000 barras
+      const need = count - out.size;
+      const span = Math.min(win, 4000 * pms, need * pms * 1.6 + 4 * 864e5);
+      const begin = Math.max(start, end - span);
       await this.histGap();
-      const r = await this.send(PT.TRENDBARS, { ctidTraderAccountId: this.acc, symbolId: s.id, period, fromTimestamp: Math.floor(begin), toTimestamp: Math.floor(end), count: Math.min(count, 5000) });
+      const r = await this.send(PT.TRENDBARS, { ctidTraderAccountId: this.acc, symbolId: s.id, period, fromTimestamp: Math.floor(begin), toTimestamp: Math.floor(end), count: 5000 });
       const bars = (r.trendbar || []).map(b => this.bar(b, s, gran));
-      if (!bars.length) { if (++empty >= 2) break; } else empty = 0;
+      if (!bars.length) { if (++empty >= 3) break; } else empty = 0;
       bars.forEach(b => out.set(b.ot, b));
       const oldest = bars.length ? Math.min(...bars.map(b => b.ot)) * 1000 : begin;
       end = Math.min(begin, oldest) - 1;

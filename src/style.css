@@ -1,7 +1,7 @@
 [hidden] { display: none !important; }
 :root, [data-theme="dark"] {
-  --bg: #131722; --panel: #1e222d; --panel2: #2a2e39; --line: #2a2e39; --text: #d1d4dc; --muted: #787b86; --btn: #2a2e39;
-  --accent: #2962ff; --up: #089981; --down: #f23645; --hover: #2a2e39; --input: #2a2e39;
+  --bg: #000000; --panel: #18191b; --panel2: #242528; --line: #1e1f22; --text: #e4e5e7; --muted: #868892; --btn: #18191b;
+  --accent: #2962ff; --up: #089981; --down: #f23645; --hover: rgba(255,255,255,.07); --input: #18191b;
   --sat: max(env(safe-area-inset-top), var(--safe-area-inset-top, 0px));
   --sab: max(env(safe-area-inset-bottom), var(--safe-area-inset-bottom, 0px));
   --sal: max(env(safe-area-inset-left), var(--safe-area-inset-left, 0px));
@@ -15,7 +15,7 @@
   color-scheme: light;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif; overflow: hidden; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif; font-variant-numeric: tabular-nums; overflow: hidden; }
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex: none; }
@@ -296,3 +296,6 @@ sup { font-size: .68em; vertical-align: top; line-height: 1; position: relative;
   html[data-layout="desk"] .rp-trade button { height: 32px; padding: 0 12px; font-size: 13px; }
   html[data-layout="desk"] .favbar { top: 30px; }
 }
+
+[data-theme="dark"] .sheet, [data-theme="dark"] .pmenu { border: 1px solid #303136; }
+[data-theme="dark"] .sico .ci[style*="#2a2e39"] { background: #18191b !important; }

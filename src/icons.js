@@ -67,10 +67,10 @@ const hue = str => { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(
 export function symIcon(name, size = 28) {
   const raw = String(name); const yl = /^([A-Z]{2})10Y$/.exec(raw);
   const circle = (txt, bg, emoji, cls = '') => `<i class="ci ${cls}" style="${bg ? `background:${bg};` : ''}${emoji ? '' : 'color:#fff;'}">${txt}</i>`;
-  if (yl) return `<span class="sico" style="--sz:${size}px">${circle(FLAG[yl[1]] || yl[1], '#2a2e39', true)}</span>`;
+  if (yl) return `<span class="sico" style="--sz:${size}px">${circle(FLAG[yl[1]] || yl[1], '#18191b', true)}</span>`;
   const sp = SPECIAL.find(x => x[0].test(raw.replace('_', '')));
   if (sp) return `<span class="sico" style="--sz:${size}px">${circle(sp[1], sp[2])}</span>`;
   const m = /^([A-Z]{3})_?([A-Z]{3})$/.exec(raw);
-  if (m && FLAG[m[1]] && FLAG[m[2]]) return `<span class="sico two" style="--sz:${size}px">${circle(FLAG[m[1]], '#2a2e39', true, 'a')}${circle(FLAG[m[2]], '#2a2e39', true, 'b')}</span>`;
+  if (m && FLAG[m[1]] && FLAG[m[2]]) return `<span class="sico two" style="--sz:${size}px">${circle(FLAG[m[1]], '#18191b', true, 'a')}${circle(FLAG[m[2]], '#18191b', true, 'b')}</span>`;
   return `<span class="sico" style="--sz:${size}px">${circle(raw.slice(0, 2), `hsl(${hue(raw)} 55% 42%)`)}</span>`;
 }
