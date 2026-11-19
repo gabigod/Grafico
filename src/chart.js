@@ -1,13 +1,20 @@
 // Núcleo do gráfico: série principal, dados, atualização ao vivo e conversão de coordenadas.
-import { createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
+import { createChart, CandlestickSeries, BarSeries, LineSeries, AreaSeries, HistogramSeries, CrosshairMode, LineStyle } from 'lightweight-charts';
 import * as oanda from './oanda.js';
 import { store } from './store.js';
 import { getBars, putBars } from './barcache.js';
 
 export const THEMES = {
-  dark: { bg: '#000000', text: '#b2b5be', grid: 'rgba(0,0,0,0)', border: '#242528', up: '#089981', down: '#f23645', cross: '#787b86', crossLabel: '#3c3e43', accent: '#2962ff', muted: '#787b86' },
-  light: { bg: '#ffffff', text: '#131722', grid: 'rgba(42,46,57,0.06)', border: '#e0e3eb', up: '#089981', down: '#f23645', cross: '#9598a1', crossLabel: '#363a45', accent: '#2962ff', muted: '#787b86' },
+  dark: { bg: '#131722', text: '#b2b5be', grid: 'rgba(42,46,57,0.6)', border: '#2a2e39', up: '#089981', down: '#f23645', cross: '#758696', crossLabel: '#363a45', accent: '#2962ff', muted: '#787b86' },
+  light: { bg: '#ffffff', text: '#4c525e', grid: 'rgba(42,46,57,0.08)', border: '#e0e3eb', up: '#089981', down: '#f23645', cross: '#9598a1', crossLabel: '#363a45', accent: '#2962ff', muted: '#787b86' },
 };
+
+// O volume vem das barras da fonte (em Forex pode ser volume de ticks).
+export function volumePoint(bar) {
+  const volume = Number(bar.volume);
+  if (bar.volume == null || !Number.isFinite(volume) || volume < 0) return { time: bar.time };
+  return { time: bar.time, value: volume, color: bar.close >= bar.open ? 'rgba(8,153,129,0.48)' : 'rgba(242,54,69,0.48)' };
+}
 
 export class ChartCore {
   constructor(el) {
@@ -15,20 +22,24 @@ export class ChartCore {
     this.theme = store.get('theme', 'dark');
     this.tz = store.get('tz', Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
     this.ctype = store.get('ctype', 'candles');
+    this.volumeVisible = store.get('volumeVisible', true);
     this.bars = []; this.viewLen = 0; this.instrument = 'EUR_USD'; this.tf = oanda.tfById('D');
     this.listeners = {}; this.loadSeq = 0; this.loadingMore = false; this.noMoreHistory = false; this.liveTimer = null; this.lastRefresh = 0;
     const t = THEMES[this.theme];
     this.chart = createChart(el, {
       autoSize: true,
       layout: { background: { type: 'solid', color: t.bg }, textColor: t.text, fontSize: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif", attributionLogo: true, panes: { separatorColor: t.border, separatorHoverColor: 'rgba(41,98,255,0.3)', enableResize: true } },
-      grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+      grid: { vertLines: { visible: true, color: t.grid }, horzLines: { visible: true, color: t.grid } },
       crosshair: { mode: CrosshairMode.Normal, vertLine: { color: t.cross, width: 1, labelBackgroundColor: t.crossLabel, style: LineStyle.Dashed }, horzLine: { color: t.cross, width: 1, labelBackgroundColor: t.crossLabel, style: LineStyle.Dashed } },
-      rightPriceScale: { borderColor: t.border, scaleMargins: { top: 0.12, bottom: 0.08 } },
-      timeScale: { borderColor: t.border, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 7, minBarSpacing: 0.5 },
+      rightPriceScale: { borderColor: t.border, scaleMargins: { top: 0.18, bottom: 0.16 } },
+      timeScale: { borderColor: t.border, timeVisible: true, secondsVisible: false, rightOffset: 8, barSpacing: 8, minBarSpacing: 0.5 },
       localization: { locale: 'pt-BR', timeFormatter: ts => this.fmtTime(ts, true) },
       kineticScroll: { touch: true, mouse: false },
     });
     this.chart.applyOptions({ timeScale: { tickMarkFormatter: (ts, type) => this.fmtTick(ts, type) } });
+    // Escala sobreposta e independente para não distorcer a escala de preços.
+    this.volume = this.chart.addSeries(HistogramSeries, { priceScaleId: 'volume', priceFormat: { type: 'volume' }, lastValueVisible: false, priceLineVisible: false, visible: this.volumeVisible });
+    this.volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     this.makeMainSeries();
     this.chart.timeScale().subscribeVisibleLogicalRangeChange(r => { if (r && r.from < 30) this.loadMore(); this.emit('range', r); });
     this.chart.subscribeCrosshairMove(p => this.emit('crosshair', p));
@@ -69,9 +80,14 @@ export class ChartCore {
     this.emit('mainSeries', this.main);
   }
   setChartType(type) { this.ctype = type; store.set('ctype', type); this.makeMainSeries(); }
+  setVolumeVisible(visible) {
+    this.volumeVisible = visible; store.set('volumeVisible', visible);
+    this.volume.applyOptions({ visible });
+  }
+  setVolumeData(bars = this.view()) { this.volume.setData(bars.map(volumePoint)); }
   applyTheme(theme) {
     this.theme = theme; store.set('theme', theme); const t = THEMES[theme];
-    this.chart.applyOptions({ layout: { background: { color: t.bg }, textColor: t.text, panes: { separatorColor: t.border } }, grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+    this.chart.applyOptions({ layout: { background: { color: t.bg }, textColor: t.text, panes: { separatorColor: t.border } }, grid: { vertLines: { visible: true, color: t.grid }, horzLines: { visible: true, color: t.grid } },
       crosshair: { vertLine: { color: t.cross, labelBackgroundColor: t.crossLabel }, horzLine: { color: t.cross, labelBackgroundColor: t.crossLabel } },
       rightPriceScale: { borderColor: t.border }, timeScale: { borderColor: t.border } });
     this.makeMainSeries();
@@ -100,6 +116,7 @@ export class ChartCore {
     this.main.applyOptions({ priceFormat: this.priceFormat() });
     this.chart.applyOptions({ timeScale: { timeVisible: this.tf.sec < 86400 } });
     this.main.setData(this.seriesData(bars));
+    this.setVolumeData(bars);
     if (!keepRange) this.showLast(this.defBars());
     this.emit('data', { reset: true });
   }
@@ -146,21 +163,22 @@ export class ChartCore {
       // mantém a posição do usuário: só troca os dados
       const range = this.chart.timeScale().getVisibleLogicalRange();
       const shift = fresh.length - cached.length;
-      this.bars = fresh; this.main.setData(this.seriesData(fresh));
+      this.bars = fresh; this.main.setData(this.seriesData(fresh)); this.setVolumeData(fresh);
       if (range && Math.abs(shift) < 50) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + shift, to: range.to + shift });
       else if (!keepRange) this.showLast(this.defBars());
       this.emit('data', { reset: true });
     } else this.applyBars(fresh, { keepRange });
     return this.bars;
   }
-  defBars() { return Math.max(40, Math.min(150, Math.round((this.el.clientWidth || 800) / 7))); }
+  defBars() { return Math.max(40, Math.min(150, Math.round((this.el.clientWidth || 800) / 8.5))); }
   showLast(n) {
     const len = this.view().length; if (!len) return;
     this.chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, len - n), to: len + 6 });
   }
   setViewLen(n, { full } = {}) {
     this.viewLen = n >= this.bars.length ? 0 : n;
-    if (full) this.main.setData(this.seriesData(this.view()));
+    if (full) { this.main.setData(this.seriesData(this.view())); this.setVolumeData(); }
+    else if (this.bars[n - 1]) this.volume.update(volumePoint(this.bars[n - 1]));
   }
   async loadMore() {
     if (this.loadingMore || this.noMoreHistory || !this.bars.length) return;
@@ -172,7 +190,7 @@ export class ChartCore {
       const range = this.chart.timeScale().getVisibleLogicalRange();
       this.bars = older.concat(this.bars);
       if (this.viewLen) this.viewLen += older.length;
-      this.main.setData(this.seriesData(this.view()));
+      this.main.setData(this.seriesData(this.view())); this.setVolumeData();
       if (range) this.chart.timeScale().setVisibleLogicalRange({ from: range.from + older.length, to: range.to + older.length });
       putBars(this.cacheKey(), { at: Date.now(), bars: this.bars });
       this.emit('data', { prepended: older.length });
@@ -203,7 +221,7 @@ export class ChartCore {
     if (lb && lb.time > last.time) {
       // barra nova chegou pelo fluxo ao vivo
       last.complete = true; this.bars.push({ ...lb, complete: false });
-      if (!this.viewLen) { this.main.setData(this.seriesData(this.bars)); this.emit('newBar'); }
+      if (!this.viewLen) { this.main.setData(this.seriesData(this.bars)); this.setVolumeData(); this.emit('newBar'); }
       return;
     }
     if (lb && lb.time === last.time) { Object.assign(last, { open: lb.open, high: Math.max(lb.high, p.mid), low: Math.min(lb.low, p.mid) }); last.complete = false; }
@@ -222,8 +240,8 @@ export class ChartCore {
       else if (!this.bars.length || b.time > this.bars.at(-1).time) { this.bars.push(b); added = true; }
     }
     if (this.viewLen) return;
-    if (added) { this.main.setData(this.seriesData(this.bars)); this.emit('newBar'); }
-    else this.main.update(this.dataPoint(this.bars, this.bars.length - 1));
+    if (added) { this.main.setData(this.seriesData(this.bars)); this.setVolumeData(); this.emit('newBar'); }
+    else { this.main.update(this.dataPoint(this.bars, this.bars.length - 1)); this.volume.update(volumePoint(this.bars.at(-1))); }
     this.emit('tick', this.bars.at(-1));
   }
 

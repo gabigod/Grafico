@@ -187,7 +187,7 @@ const DEMO_INSTRUMENTS = [
   ['EUR_USD', 'EUR/USD', 1.085], ['GBP_USD', 'GBP/USD', 1.27], ['USD_JPY', 'USD/JPY', 151.2], ['AUD_USD', 'AUD/USD', 0.66], ['USD_CAD', 'USD/CAD', 1.36],
   ['USD_CHF', 'USD/CHF', 0.88], ['NZD_USD', 'NZD/USD', 0.6], ['EUR_GBP', 'EUR/GBP', 0.855], ['GBP_JPY', 'GBP/JPY', 192.1], ['XAU_USD', 'Gold', 2350],
   ['US30_USD', 'US Wall St 30', 39000], ['NAS100_USD', 'US Nas 100', 18200], ['SPX500_USD', 'US SPX 500', 5200], ['DE30_EUR', 'Germany 30', 18100],
-].map(([name, display, base]) => ({ name, display, type: name.includes('_USD') && name.length === 7 || /^[A-Z]{3}_[A-Z]{3}$/.test(name) && !/^(XAU)/.test(name) ? 'CURRENCY' : 'CFD', prec: base > 1000 ? 1 : base > 50 ? 3 : 5, pip: base > 50 ? -2 : -4, base }));
+].map(([name, display, base]) => ({ name, display, type: /^[A-Z]{3}_[A-Z]{3}$/.test(name) && !/^(XAU|XAG|XPT|XPD|XCU)_/.test(name) ? 'CURRENCY' : 'CFD', prec: base > 1000 ? 1 : base > 50 ? 3 : 5, pip: base > 50 ? -2 : -4, base }));
 function rnd(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 function demoSeries(instrument, gran) {
   const key = instrument + gran; if (demoSeries.c[key]) return demoSeries.c[key];

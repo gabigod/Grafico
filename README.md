@@ -4,8 +4,10 @@ Um app Android de gráficos parecido com o TradingView, com preços ao vivo da c
 
 ## O que o app faz
 
-- **Gráfico:** candles, candles vazados, Heikin Ashi, barras, linha e área. Timeframes de 1m até mensal. Ao rolar para a esquerda, carrega mais histórico.
-- **Preço ao vivo:** consulta a OANDA a cada segundo. As barras diárias fecham às 17h de Nova York.
+- **Área de trabalho:** barras de ferramentas, grade, lista de observação e detalhes do ativo inspirados no TradingView, com layouts para desktop e celular e temas escuro e claro.
+- **Gráfico:** candles, candles vazados, Heikin Ashi, barras, linha e área. Timeframes de 1m até mensal. Ao rolar para a esquerda, carrega mais histórico. O volume pode ser ocultado na legenda; em Forex, ele pode representar volume de ticks da fonte.
+- **Cotações:** preços de compra e venda são exibidos apenas como referência; esses quadros não enviam ordens. Sem uma conta conectada, os preços são simulados e identificados na tela.
+- **Preço ao vivo:** consulta a fonte configurada a cada segundo. As barras diárias fecham às 17h de Nova York.
 - **Scripts Pine (v5/v6):** cole um código do TradingView e ele roda no app. O motor é o PineTS. Funcionam:
   - `plot`, `plotshape`, `plotchar`, `hline`, `fill` e `bgcolor`
   - `line.new`, `box.new` e `label.new`
@@ -38,6 +40,8 @@ Na busca, categoria **Yields**: 10 anos de US, DE (EUR), GB, JP, AU, CA, CH e NZ
 2. A cada envio, a aba **Actions** compila o app sozinha, em uns 5 minutos.
 3. O APK aparece em **Releases** como `GraficosFX.apk`. Abra essa página no celular, baixe e instale. O Android vai pedir para permitir a instalação de "fontes desconhecidas".
 
+Também é possível executar o fluxo manualmente em outra branch: o APK fica nos artefatos da execução em **Actions**, sem criar uma release.
+
 O APK é sempre assinado com a mesma chave, que fica em `android/app/graficos-debug.keystore`. Por isso as versões novas instalam por cima da antiga sem apagar seus desenhos e scripts.
 
 ## Conectar a cTrader
@@ -60,6 +64,8 @@ Sem token, o app funciona em modo demonstração, com preços simulados.
 ```bash
 npm install
 npm run dev        # abre no navegador (modo demonstração)
+npm test           # testes de dados, ícones e replay
+npm run build      # compila a versão web
 npm run sync       # monta o app e copia para o projeto Android
 ```
 

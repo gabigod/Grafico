@@ -12,24 +12,27 @@
 
     <div class="body">
       <aside class="tools only-desk" id="tools"></aside>
-      <div class="chart-wrap" id="chart-wrap">
-        <div id="chart"></div>
-        <div class="legend" id="legend"></div>
-        <div class="favbar" id="favbar"></div>
-        <div class="cd" id="cd" hidden></div>
-        <div class="rp-dim" id="rp-dim" hidden></div>
-        <div class="rp-line" id="rp-line" hidden><span class="rp-sc"></span><span class="rp-chip" id="rp-chip"></span></div>
-        <div class="rp-trade" id="rp-trade" hidden></div>
-        <div class="banner" id="banner" hidden></div>
-        <div class="draw-pop" id="draw-pop" hidden></div>
-        <div class="toast" id="toast"></div>
+      <div class="chart-column">
+        <div class="chart-wrap" id="chart-wrap">
+          <div id="chart"></div>
+          <div class="legend" id="legend"></div>
+          <div class="favbar" id="favbar" hidden></div>
+          <div class="cd" id="cd" hidden></div>
+          <div class="rp-dim" id="rp-dim" hidden></div>
+          <div class="rp-line" id="rp-line" hidden><span class="rp-sc"></span><span class="rp-chip" id="rp-chip"></span></div>
+          <div class="rp-trade" id="rp-trade" hidden></div>
+          <div class="banner" id="banner" hidden></div>
+          <div class="draw-pop" id="draw-pop" hidden></div>
+          <div class="toast" id="toast" role="status" aria-live="polite"></div>
+        </div>
+        <div class="bot only-desk" id="bot"></div>
       </div>
-      <aside class="watch" id="watch"></aside>
-      <nav class="rbar only-desk" id="rbar"></nav>
+      <aside class="watch" id="watch" aria-label="Lista de observação"></aside>
+      <nav class="rbar only-desk" id="rbar" aria-label="Painéis laterais"></nav>
     </div>
 
     <div class="replay-bar" id="replay-bar" hidden></div>
-    <footer class="bot only-desk" id="bot"></footer>
+    <footer class="terminal only-desk" id="terminal"></footer>
 
     <!-- layout de celular em pé -->
     <div class="mbot only-mob" id="mbot"></div>

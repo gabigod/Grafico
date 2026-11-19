@@ -54,10 +54,26 @@ export const ICON = {
   swap: s('<path d="M7 4v14M4 15l3 3 3-3M17 20V6M14 9l3-3 3 3"/>'),
   bell: s('<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>'),
   sync: s('<path d="M20 11a8 8 0 0 0-14-4L4 9M4 4v5h5M4 13a8 8 0 0 0 14 4l2-2M20 20v-5h-5"/>'),
+  fullscreen: s('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'),
+  crosshair: s('<path d="M12 2v7M12 15v7M2 12h7M15 12h7"/><circle cx="12" cy="12" r="1"/>'),
+  pointer: s('<path d="M5 3l14 8-6 1.5L10 19z"/>'),
+  cloud: s('<path d="M7 19h10a4 4 0 0 0 .4-8 5.5 5.5 0 0 0-10.6-1.1A4.6 4.6 0 0 0 7 19z"/><path d="M9 14l2 2 4-4"/>'),
 };
 
 // ---- ícones de ativos ----
-const FLAG = { USD: '🇺🇸', EUR: '🇪🇺', GBP: '🇬🇧', JPY: '🇯🇵', AUD: '🇦🇺', CAD: '🇨🇦', CHF: '🇨🇭', NZD: '🇳🇿', BRL: '🇧🇷', MXN: '🇲🇽', CNH: '🇨🇳', CNY: '🇨🇳', SEK: '🇸🇪', NOK: '🇳🇴', DKK: '🇩🇰', PLN: '🇵🇱', TRY: '🇹🇷', ZAR: '🇿🇦', SGD: '🇸🇬', HKD: '🇭🇰', CZK: '🇨🇿', HUF: '🇭🇺', THB: '🇹🇭', INR: '🇮🇳', DE: '🇩🇪', US: '🇺🇸', GB: '🇬🇧', JP: '🇯🇵', AU: '🇦🇺', CA: '🇨🇦', CH: '🇨🇭', NZ: '🇳🇿' };
+// Bandeiras vetoriais locais evitam depender da fonte de emoji do aparelho.
+const FLAG_ART = {
+  EUR: '<rect width="24" height="24" fill="#1746a2"/><g fill="#ffd54f"><circle cx="12" cy="5" r="1"/><circle cx="17" cy="7" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="17" cy="17" r="1"/><circle cx="12" cy="19" r="1"/><circle cx="7" cy="17" r="1"/><circle cx="5" cy="12" r="1"/><circle cx="7" cy="7" r="1"/></g>',
+  USD: '<rect width="24" height="24" fill="#fff"/><path d="M0 2h24v2H0zm0 4h24v2H0zm0 4h24v2H0zm0 4h24v2H0zm0 4h24v2H0zm0 4h24v2H0z" fill="#d93a49"/><path d="M0 0h11v12H0z" fill="#264b92"/><g fill="#fff"><circle cx="3" cy="3" r=".7"/><circle cx="7" cy="3" r=".7"/><circle cx="5" cy="6" r=".7"/><circle cx="3" cy="9" r=".7"/><circle cx="8" cy="9" r=".7"/></g>',
+  GBP: '<rect width="24" height="24" fill="#21468b"/><path d="M0 0l24 24M24 0L0 24" stroke="#fff" stroke-width="5"/><path d="M0 0l24 24M24 0L0 24" stroke="#db3347" stroke-width="2"/><path d="M12 0v24M0 12h24" stroke="#fff" stroke-width="7"/><path d="M12 0v24M0 12h24" stroke="#db3347" stroke-width="3"/>',
+  JPY: '<rect width="24" height="24" fill="#fff"/><circle cx="12" cy="12" r="6" fill="#d63043"/>',
+  AUD: '<rect width="24" height="24" fill="#173c83"/><path d="M0 0l11 9M11 0L0 9" stroke="#fff" stroke-width="2"/><path d="M5.5 0v10M0 5h11" stroke="#fff" stroke-width="3"/><path d="M5.5 0v10M0 5h11" stroke="#e4374c" stroke-width="1.3"/><g fill="#fff"><circle cx="17" cy="7" r="1"/><circle cx="19" cy="13" r="1"/><circle cx="15" cy="17" r="1.2"/><circle cx="8" cy="18" r="1.4"/></g>',
+  NZD: '<rect width="24" height="24" fill="#173c83"/><path d="M0 0l11 9M11 0L0 9" stroke="#fff" stroke-width="2"/><path d="M5.5 0v10M0 5h11" stroke="#fff" stroke-width="3"/><path d="M5.5 0v10M0 5h11" stroke="#e4374c" stroke-width="1.3"/><g fill="#ef495b" stroke="#fff" stroke-width=".6"><circle cx="17" cy="7" r="1.3"/><circle cx="19" cy="13" r="1.3"/><circle cx="15" cy="17" r="1.3"/></g>',
+  CAD: '<rect width="24" height="24" fill="#fff"/><path d="M0 0h6v24H0zm18 0h6v24h-6z" fill="#e43948"/><path d="M12 4l1.2 3 1.7-1-.3 3 2 1-2 1.6 1 2-2.6-.4L12 19l-1-5.8-2.6.4 1-2-2-1.6 2-1-.3-3 1.7 1z" fill="#e43948"/>',
+  CHF: '<rect width="24" height="24" fill="#e43746"/><path d="M10 5h4v5h5v4h-5v5h-4v-5H5v-4h5z" fill="#fff"/>',
+  BRL: '<rect width="24" height="24" fill="#159447"/><path d="M12 3l10 9-10 9L2 12z" fill="#f7d43b"/><circle cx="12" cy="12" r="5" fill="#2252a4"/><path d="M7 11c3-1 7 0 10 2" stroke="#fff" stroke-width="1"/>',
+};
+const FLAG_ALIAS = { US: 'USD', GB: 'GBP', JP: 'JPY', AU: 'AUD', CA: 'CAD', CH: 'CHF', NZ: 'NZD' };
 const SPECIAL = [
   [/^(US30|DJI|WS30)/, '30', '#1e9bf0'], [/^(NAS100|US100|USTEC)/, '100', '#00a3d4'], [/^(SPX500|US500)/, '500', '#e0273d'],
   [/^(DE30|DE40|GER)/, '40', '#f5a623'], [/^UK100/, '100', '#7e57c2'], [/^JP225/, '225', '#e53935'], [/^(XAU)/, 'Au', '#f2b01e'], [/^XAG/, 'Ag', '#9aa3b2'],
@@ -67,11 +83,16 @@ const hue = str => { let h = 0; for (const c of str) h = (h * 31 + c.charCodeAt(
 // devolve o HTML do ícone (um ou dois círculos sobrepostos)
 export function symIcon(name, size = 28) {
   const raw = String(name); const yl = /^([A-Z]{2})10Y$/.exec(raw);
-  const circle = (txt, bg, emoji, cls = '') => `<i class="ci ${cls}" style="${bg ? `background:${bg};` : ''}${emoji ? '' : 'color:#fff;'}">${txt}</i>`;
-  if (yl) return `<span class="sico" style="--sz:${size}px">${circle(FLAG[yl[1]] || yl[1], '#18191b', true)}</span>`;
+  const circle = (txt, bg, cls = '') => `<i class="ci ${cls}" style="background:${bg};color:#fff">${txt}</i>`;
+  const flag = (code, cls = '') => {
+    const art = FLAG_ART[FLAG_ALIAS[code] || code];
+    return art ? `<i class="ci flag ${cls}"><svg viewBox="0 0 24 24" aria-hidden="true">${art}</svg></i>` : circle(code.slice(0, 2), `hsl(${hue(code)} 45% 38%)`, cls);
+  };
+  if (yl) return `<span class="sico" style="--sz:${size}px" aria-hidden="true">${flag(yl[1])}</span>`;
   const sp = SPECIAL.find(x => x[0].test(raw.replace('_', '')));
-  if (sp) return `<span class="sico" style="--sz:${size}px">${circle(sp[1], sp[2])}</span>`;
+  if (sp) return `<span class="sico" style="--sz:${size}px" aria-hidden="true">${circle(sp[1], sp[2])}</span>`;
   const m = /^([A-Z]{3})_?([A-Z]{3})$/.exec(raw);
-  if (m && FLAG[m[1]] && FLAG[m[2]]) return `<span class="sico two" style="--sz:${size}px">${circle(FLAG[m[1]], '#18191b', true, 'a')}${circle(FLAG[m[2]], '#18191b', true, 'b')}</span>`;
-  return `<span class="sico" style="--sz:${size}px">${circle(raw.slice(0, 2), `hsl(${hue(raw)} 55% 42%)`)}</span>`;
+  if (m) return `<span class="sico two" style="--sz:${size}px" aria-hidden="true">${flag(m[1], 'a')}${flag(m[2], 'b')}</span>`;
+  const initials = raw.replace(/[^A-Z0-9]/gi, '').slice(0, 2) || '?';
+  return `<span class="sico" style="--sz:${size}px" aria-hidden="true">${circle(initials, `hsl(${hue(raw)} 55% 42%)`)}</span>`;
 }

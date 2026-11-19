@@ -27,9 +27,9 @@ const state = {
   instrument: store.get('instrument', 'EUR_USD'),
   tf: store.get('tf', 'D'),
   watch: store.get('watch', DEFAULT_WATCH),
-  favTfs: store.get('favTfs', ['15', '60', '240', 'D', 'W']),
+  favTfs: store.get('favTfs', ['5', '15', '60', '240', 'D']),
   recent: store.get('recent', []),
-  prices: {}, prevClose: {}, shown: {},
+  prices: {}, prevClose: {}, shown: {}, currentQuote: null,
 };
 const layout = () => document.documentElement.dataset.layout;
 const isMob = () => layout() === 'mob';
@@ -110,10 +110,15 @@ const replay = new Replay(core, ui);
 
 let scriptTimer = null, lastTickAt = 0;
 function scheduleScripts(delay = 120) { clearTimeout(scriptTimer); scriptTimer = setTimeout(() => scripts.runAll(), delay); }
-core.on('data', () => { scheduleScripts(80); updateCd(); });
+core.on('data', () => { scheduleScripts(80); updateCd(); updateLegend(); renderWatch(); });
 core.on('newBar', () => scheduleScripts(10));
 let lastTickRun = 0;
-core.on('tick', () => { lastTickAt = Date.now(); updateLegend(); updateCd(); if (rt.pos) updateTradePanel(); const now = Date.now(); if (now - lastTickRun > 5000) { lastTickRun = now; scheduleScripts(300); } });
+core.on('tick', (_bar, quote) => {
+  lastTickAt = Date.now();
+  if (quote) state.currentQuote = { ...quote, instrument: core.instrument };
+  updateLegend(); updateCd(); if (rt.pos) updateTradePanel();
+  const now = Date.now(); if (now - lastTickRun > 5000) { lastTickRun = now; scheduleScripts(300); }
+});
 core.on('range', () => updateCd());
 core.on('error', e => ui.toast(e.message));
 let liveErrShown = 0;
@@ -124,7 +129,7 @@ async function loadSymbol(instrument, tf = state.tf) {
   instrument = oanda.resolveTicker(instrument);
   state.instrument = instrument; state.tf = tf; store.set('instrument', instrument); store.set('tf', tf);
   state.recent = [{ i: instrument, tf }, ...state.recent.filter(r => !(r.i === instrument && r.tf === tf))].slice(0, 12); store.set('recent', state.recent);
-  syncChrome(); renderWatch();
+  activeRange = null; renderBot(); syncChrome(); renderWatch();
   if (core.instrument !== instrument || core.tf.id !== tf) { scripts.results = {}; scripts.renderAll(); }
   drawings.loadFor(instrument);
   const gen = ++loadGen;
@@ -171,23 +176,40 @@ function fmtVal(v, prec) {
 }
 function statusPill() {
   if (replay.active) return ['Replay', ''];
-  if (!oanda.hasOanda()) return ['Demo', ''];
-  return Date.now() - lastTickAt < 25000 ? ['Ao vivo', 'live'] : ['Fechado', ''];
+  if (!oanda.hasOanda()) return ['Simulação', 'demo'];
+  return Date.now() - lastTickAt < 25000 ? ['Ao vivo', 'live'] : ['Sem atualização', ''];
 }
 const quoteUnit = n => /10Y$/.test(n) ? '%' : (/_([A-Z]{3})$/.exec(n)?.[1] || 'USD');
+function quoteStrip(info, prec) {
+  // As cotações atuais não devem aparecer durante o replay do passado.
+  if (replay.active) return '';
+  const q = state.currentQuote?.instrument === core.instrument ? state.currentQuote : state.prices[core.instrument];
+  const bid = Number.isFinite(q?.bid) ? q.bid : null, ask = Number.isFinite(q?.ask) ? q.ask : null;
+  const pip = Math.pow(10, info.pip ?? -4);
+  const spread = bid !== null && ask !== null && ask >= bid ? ((ask - bid) / pip).toFixed(1) : '—';
+  return `<div class="quote-strip" aria-label="Cotações de referência; não são ordens">
+    <div class="quote sell" title="Preço de venda de referência"><b>${bid === null ? '—' : bid.toFixed(prec)}</b><span>VENDA</span></div>
+    <span class="spread" title="Spread em pips">${spread}</span>
+    <div class="quote buy" title="Preço de compra de referência"><b>${ask === null ? '—' : ask.toFixed(prec)}</b><span>COMPRA</span></div>
+  </div>`;
+}
 function updateLegend() {
   const v = core.view(); if (!v.length) return;
   const mob = isMob();
   const i = crossIdx !== null && crossIdx >= 0 && crossIdx < v.length ? crossIdx : v.length - 1;
   const b = v[i], pb = v[i - 1]; const info = oanda.instInfo(core.instrument); const prec = info.prec ?? 5;
   const ch = pb ? b.close - pb.close : 0; const cls = ch >= 0 ? 'up' : 'down';
-  const chTxt = `${ch >= 0 ? '+' : ''}${ch.toFixed(prec)} (${pb ? (ch / pb.close * 100).toFixed(2) : '0.00'}%)`;
+  const pct = pb?.close ? ch / pb.close * 100 : 0;
+  const chTxt = `${ch >= 0 ? '+' : ''}${ch.toFixed(prec)} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
   const ohlc = `<span class="k">A</span><span class="v ${cls}">${b.open.toFixed(prec)}</span><span class="k">M</span><span class="v ${cls}">${b.high.toFixed(prec)}</span><span class="k">Mí</span><span class="v ${cls}">${b.low.toFixed(prec)}</span><span class="k">F</span><span class="v ${cls}">${b.close.toFixed(prec)}</span>`;
   const [pl, pc] = statusPill(); const name = info.display || oanda.short(core.instrument);
   let html;
-  if (!mob) html = `<div class="row"><span class="title">${symIcon(core.instrument, 18)}<span>${esc(name)} · ${esc(core.tf.label)} · ${oanda.feedName()}</span></span><span class="pill ${pc}"><i></i>${pl}</span>${ohlc}<span class="v ${cls}">${chTxt}</span></div>`;
-  else html = `<div class="mh" data-act="symbol">${symIcon(core.instrument, 28)}<span class="nm">${esc(name)}</span><span class="pill ${pc}"><i></i>${pl}</span><span class="unit">${esc(quoteUnit(core.instrument))}${ICON.chevD}</span></div>
-    <div class="mchg ${crossIdx !== null ? '' : cls}">${crossIdx !== null ? `<span class="row">${ohlc}</span>` : chTxt}</div>`;
+  if (!mob) html = `<div class="row legend-main"><button class="title" data-act="symbol" title="Buscar ativo">${symIcon(core.instrument, 22)}<span>${esc(name)} · ${esc(core.tf.label)} · ${oanda.feedName()}</span></button><span class="pill ${pc}"><i></i>${pl}</span><span class="ohlc-values">${ohlc}<span class="v ${cls}">${chTxt}</span></span></div>`;
+  else html = `<div class="mh"><button class="mobile-title" data-act="symbol" title="Buscar ativo">${symIcon(core.instrument, 28)}<span class="nm">${esc(name)}</span>${ICON.chevD}</button><span class="pill ${pc}"><i></i>${pl}</span><span class="unit">${esc(quoteUnit(core.instrument))}</span></div>
+    <div class="mchg ${crossIdx !== null ? '' : cls}">${crossIdx !== null ? `<span class="row">${ohlc}</span>` : `<b>${b.close.toFixed(prec)}</b> ${chTxt}`}</div>`;
+  html += quoteStrip(info, prec);
+  const vol = Number.isFinite(b.volume) ? fmtVal(b.volume, 0) : '—';
+  html += `<div class="vol-legend ${core.volumeVisible ? '' : 'off'}"><button data-act="volume" aria-pressed="${core.volumeVisible}" title="Mostrar ou ocultar volume">${core.volumeVisible ? ICON.eye : ICON.eyeOff}</button><span title="Volume informado pela fonte; em Forex pode ser volume de ticks">Vol.</span><span class="${cls}">${vol}</span></div>`;
   const vals = scripts.valuesAt(i);
   if (!legendCollapsed) for (const s of scripts.active) {
     const r = vals[s.id]; const nm = r?.title || s.name;
@@ -197,7 +219,7 @@ function updateLegend() {
     else html += r.vals.slice(0, 5).map(x => `<span class="v" style="color:${x.color}">${fmtVal(x.v, r.overlay ? prec : undefined)}</span>`).join('');
     html += `<button class="eyeb" data-a="eye" title="Mostrar/ocultar">${s.visible ? ICON.eye : ICON.eyeOff}</button><span class="acts"><button data-a="eye" title="Mostrar/ocultar">${ICON.eye}</button><button data-a="set" title="Configurar">${ICON.gear}</button><button data-a="code" title="Código">${ICON.code}</button><button data-a="del" title="Remover">${ICON.trash}</button></span></div>`;
   }
-  if (scripts.active.length) html += `<button class="collapse" data-a="collapse">${legendCollapsed ? ICON.chevD : ICON.chevU}</button>`;
+  if (scripts.active.length) html += `<button class="collapse" data-a="collapse" title="Recolher indicadores">${legendCollapsed ? ICON.chevD : ICON.chevU}</button>`;
   $('#legend').innerHTML = html;
 }
 
@@ -229,12 +251,15 @@ function renderTools() {
     <button class="tool ${drawings.keep ? 'on' : ''}" data-act="keep" title="Continuar desenhando">${ICON.pencil}</button>
     <button class="tool ${drawings.lockAll ? 'on' : ''}" data-act="lockall" title="Travar todos os desenhos">${drawings.lockAll ? ICON.lock : ICON.unlock}</button>
     <button class="tool ${drawings.hidden ? 'on' : ''}" data-act="hide" title="Ocultar desenhos">${drawings.hidden ? ICON.eyeOff : ICON.eye}</button><span class="gap"></span>
+    <button class="tool ${store.get('favVisible', false) ? 'on' : ''}" data-act="favorites" title="Barra de desenhos favoritos">${ICON.star}</button>
     <button class="tool" data-act="clear" title="Apagar todos os desenhos">${ICON.trash}</button>`;
 }
 function pickTool(g, id) { const last = store.get('toolLast', {}); last[g] = id; store.set('toolLast', last); drawings.setTool(id); }
 function toggleTool(id) { drawings.setTool(drawings.tool === id ? 'cursor' : id); }
 function renderFav() {
   const el = $('#favbar'); if (!el) return;
+  el.hidden = !store.get('favVisible', false);
+  if (el.hidden) return;
   el.innerHTML = `<span class="grip" id="fav-grip">${ICON.grip}</span>` + FAV.map(id => `<button data-tool="${id}" class="${drawings.tool === id ? 'on' : ''}" title="${esc(toolDef(id).name)}">${toolSvg(id)}</button>`).join('');
   makeDraggable(el, $('#fav-grip'), 'favPos');
 }
@@ -277,38 +302,51 @@ function updateUndo() {
 const ctIcon = () => ICON[core.ctype] || ICON.candles;
 function renderTop() {
   const el = $('#top'); if (!el) return;
-  el.innerHTML = `<button class="tb sym" data-act="symbol" title="Buscar ativo">${ICON.search}<span>${esc(oanda.short(state.instrument))}</span></button>
+  el.innerHTML = `<button class="tb brand" data-act="settings" title="Gráficos FX · configurações"><span class="brand-mark">G</span><span class="brand-name">Gráficos <b>FX</b></span></button>
     <span class="sep"></span>
-    <div class="tfq">${state.favTfs.map(t => `<button class="tb tf ${t === state.tf ? 'on' : ''}" data-act="tfset" data-tf="${t}">${oanda.tfById(t).label}</button>`).join('')}</div>
-    <button class="tb ic" data-act="tf" title="Timeframe">${ICON.chevD}</button>
+    <button class="tb sym" data-act="symbol" title="Buscar ativo">${ICON.search}<span>${esc(oanda.short(state.instrument))}</span></button>
+    <button class="tb ic add-symbol" data-act="wadd" title="Adicionar ativo à lista">${ICON.plus}</button>
     <span class="sep"></span>
-    <button class="tb ic" data-act="ctype" title="Tipo de gráfico">${ctIcon()}${ICON.chevD}</button>
+    <div class="tfq">${state.favTfs.map(t => `<button class="tb tf ${t === state.tf ? 'on' : ''}" data-act="tfset" data-tf="${t}" title="Período ${esc(oanda.tfById(t).label)}">${oanda.tfById(t).label}</button>`).join('')}</div>
+    <button class="tb ic tf-menu" data-act="tf" title="Mais períodos">${ICON.chevD}</button>
     <span class="sep"></span>
-    <button class="tb" data-act="ind">${ICON.indicators}<span>Indicadores</span></button>
-    <button class="tb" data-act="alert">${ICON.bell}<span>Alerta</span></button>
-    <button class="tb ${replay.active ? 'on' : ''}" data-act="replay">${ICON.replay}<span>Replay</span></button>
+    <button class="tb ic chart-type" data-act="ctype" title="Tipo de gráfico">${ctIcon()}${ICON.chevD}</button>
     <span class="sep"></span>
+    <button class="tb top-action" data-act="ind" title="Indicadores e scripts">${ICON.indicators}<span>Indicadores</span></button>
+    <button class="tb top-action optional-label" data-act="alert" title="Criar alerta">${ICON.bell}<span>Alerta</span></button>
+    <button class="tb top-action optional-label ${replay.active ? 'on' : ''}" data-act="replay" title="Replay de barras">${ICON.replay}<span>Replay</span></button>
+    <span class="sep optional-sep"></span>
     <button class="tb ic ${drawings.canUndo() ? '' : 'dis'}" data-act="undo" title="Desfazer">${ICON.undo}</button>
     <button class="tb ic ${drawings.canRedo() ? '' : 'dis'}" data-act="redo" title="Refazer">${ICON.redo}</button>
     <span class="grow"></span>
-    <button class="tb ic" data-act="theme" title="Tema">${core.theme === 'dark' ? ICON.moon : ICON.sun}</button>
-    <button class="tb ic" data-act="settings" title="Configurações">${ICON.gear}</button>`;
+    <button class="tb workspace" data-act="sync" title="Ajustar ou executar sincronização">${ICON.cloud}<span>Meu layout<small>Salvo no dispositivo</small></span></button>
+    <button class="tb ic" data-act="theme" title="Alternar tema">${core.theme === 'dark' ? ICON.moon : ICON.sun}</button>
+    <button class="tb ic" data-act="settings" title="Configurações">${ICON.gear}</button>
+    <button class="tb ic desktop-extra" data-act="fullscreen" title="Tela cheia">${ICON.fullscreen}</button>
+    <button class="tb ic desktop-extra" data-act="snapshot" title="Salvar imagem do gráfico">${ICON.camera}</button>`;
 }
 function renderRbar() {
   const el = $('#rbar'); if (!el) return; const open = !$('#watch').hidden;
-  el.innerHTML = `<button class="${open ? 'on' : ''}" data-act="watch" title="Lista de ativos">${ICON.bookmark}</button>
-    <button data-act="ind" title="Indicadores e scripts">${ICON.scripts}</button>
-    <button data-act="alerts" title="Alertas">${ICON.bell}</button>
-    <button data-act="sync" title="Sincronizar">${ICON.sync}</button>`;
+  el.innerHTML = `<button class="${open ? 'on' : ''}" data-act="watch" title="Lista de observação" aria-label="Lista de observação">${ICON.list}</button>
+    <button data-act="alerts" title="Alertas" aria-label="Alertas">${ICON.bell}</button>
+    <button data-act="ind" title="Indicadores e scripts" aria-label="Indicadores e scripts">${ICON.scripts}</button>
+    <button data-act="sync" title="Sincronizar" aria-label="Sincronizar">${ICON.sync}</button>`;
 }
+let activeRange = null;
 function renderBot() {
   const el = $('#bot'); if (!el) return; const sc = core.chart.priceScale('right').options();
-  el.innerHTML = RANGES.map(r => `<button data-act="range" data-r="${r}">${r}</button>`).join('') + `<span class="sep"></span><button data-act="goto" title="Ir para data">${ICON.calendar}</button>
+  el.innerHTML = RANGES.map(r => `<button class="${activeRange === r ? 'on' : ''}" data-act="range" data-r="${r}">${r}</button>`).join('') + `<span class="sep"></span><button data-act="goto" title="Ir para data">${ICON.calendar}</button>
     <span class="grow"></span><span class="clock" id="clock"></span><span class="sep"></span>
     <button data-act="pct" class="${sc.mode === 2 ? 'on' : ''}" title="Escala em porcentagem">%</button>
     <button data-act="log" class="${sc.mode === 1 ? 'on' : ''}" title="Escala logarítmica">log</button>
     <button data-act="auto" class="${sc.autoScale ? 'on' : ''}" title="Escala automática">auto</button>`;
   tickClock();
+}
+function renderTerminal() {
+  const el = $('#terminal'); if (!el) return;
+  const feed = oanda.hasOanda() ? `Fonte: ${oanda.feedName()}` : 'Dados simulados';
+  el.innerHTML = `<div class="terminal-tabs"><button data-act="editor">${ICON.code}<span>Editor Pine</span></button><button data-act="ind">${ICON.indicators}<span>Indicadores</span></button><button data-act="alerts">${ICON.bell}<span>Alertas</span></button><button class="${replay.active ? 'on' : ''}" data-act="replay">${ICON.replay}<span>Replay</span></button></div>
+    <span class="grow"></span><button class="feed-status" data-act="settings" title="Configurar fonte de preços"><i class="${oanda.hasOanda() ? 'live' : ''}"></i>${esc(feed)}${oanda.hasOanda() ? '' : ' · Conectar'}</button>`;
 }
 function tickClock() {
   const c = $('#clock'); if (!c) return;
@@ -321,6 +359,7 @@ function tickClock() {
 setInterval(tickClock, 1000);
 function applyRange(k) {
   const v = core.view(); if (!v.length) return; const n = v.length; const sec = core.tf.sec;
+  activeRange = k; renderBot();
   if (k === 'Todos') { core.chart.timeScale().fitContent(); return; }
   const f = sec < 604800 ? 5 / 7 : 1; let bars;
   if (k === 'YTD') bars = (v.at(-1).time - Date.UTC(new Date().getUTCFullYear(), 0, 1) / 1000) / sec * f;
@@ -341,18 +380,18 @@ function openGoto() {
 // ---------------- celular em pé ----------------
 function renderMBot() {
   const el = $('#mbot'); if (!el) return;
-  const cur = state.recent[0] || { i: state.instrument, tf: state.tf };
-  const p = state.recent[2], n = state.recent[1];
-  const row = (r, c) => r ? `<button class="it ${c}" data-act="recent" data-i="${r.i}" data-tf="${r.tf}">${esc(oanda.short(r.i))}<span>${esc(oanda.tfById(r.tf).label)}</span></button>` : '';
-  el.innerHTML = `<div class="mrec">${row(p, 'p')}<div class="it cur"><span data-act="symbol">${esc(oanda.short(cur.i))}</span><span class="tfb" data-act="tf">${esc(oanda.tfById(cur.tf).label)}</span></div>${row(n, 'n')}</div>
-    <div class="mtools"><button class="${drawings.tool !== 'cursor' ? 'on' : ''}" data-act="mdraw" title="Desenhar">${ICON.pencil}</button>
-    <button data-act="ind" title="Indicadores">${ICON.fx}</button><button data-act="mmore" title="Mais">${ICON.dots}</button><span class="sep"></span>
-    <button class="${drawings.canUndo() ? '' : 'dis'}" data-act="undo">${ICON.undo}</button><button class="${drawings.canRedo() ? '' : 'dis'}" data-act="redo">${ICON.redo}</button></div>`;
+  el.innerHTML = `<div class="m-instrument"><button class="m-symbol" data-act="symbol" title="Buscar ativo">${esc(oanda.short(state.instrument))}${ICON.chevD}</button>
+    <button class="m-time" data-act="tf" title="Alterar período">${esc(oanda.tfById(state.tf).label)}${ICON.chevD}</button></div>
+    <div class="mtools"><button class="${drawings.tool !== 'cursor' ? 'on' : ''}" data-act="mdraw" title="Desenhar" aria-label="Desenhar">${ICON.pencil}</button>
+    <button data-act="ind" title="Indicadores" aria-label="Indicadores">${ICON.fx}</button>
+    <button class="m-undo ${drawings.canUndo() ? '' : 'dis'}" data-act="undo" title="Desfazer" aria-label="Desfazer">${ICON.undo}</button>
+    <button class="m-redo ${drawings.canRedo() ? '' : 'dis'}" data-act="redo" title="Refazer" aria-label="Refazer">${ICON.redo}</button>
+    <button data-act="mmore" title="Mais ferramentas" aria-label="Mais ferramentas">${ICON.dots}</button></div>`;
 }
 function renderMTabs() {
   const el = $('#mtabs'); if (!el) return; const tab = $('#app').dataset.tab;
-  const t = (id, ic, lb, on) => `<button class="${on ? 'on' : ''}" data-act="tab" data-t="${id}"><span class="ic">${ic}</span><span class="lb">${lb}</span></button>`;
-  el.innerHTML = t('watch', ICON.bookmark, 'Lista de obs.', tab === 'watch') + t('chart', ICON.chartTab, 'Gráfico', tab === 'chart' && !replay.active) + t('replay', ICON.replay, 'Replay', replay.active) + t('scripts', ICON.scripts, 'Scripts', false) + t('menu', ICON.menuTab, 'Menu', false);
+  const t = (id, ic, lb, on) => `<button class="${on ? 'on' : ''}" data-act="tab" data-t="${id}" ${on ? 'aria-current="page"' : ''}><span class="ic">${ic}</span><span class="lb">${lb}</span></button>`;
+  el.innerHTML = t('watch', ICON.bookmark, 'Lista', tab === 'watch') + t('chart', ICON.chartTab, 'Gráfico', tab === 'chart' && !replay.active) + t('replay', ICON.replay, 'Replay', replay.active) + t('scripts', ICON.scripts, 'Scripts', false) + t('menu', ICON.menuTab, 'Menu', false);
 }
 function setTab(t) {
   $('#app').dataset.tab = t; renderMTabs();
@@ -374,10 +413,16 @@ function openMDraw() {
   };
 }
 function openMMore() {
-  const rows = [['tf', ICON.calendar, 'Timeframe', oanda.tfById(state.tf).label], ['ctype', ctIcon(), 'Tipo de gráfico', CTYPES.find(c => c[0] === core.ctype)?.[1]], ['replay', ICON.replay, 'Replay', replay.active ? 'ativo' : ''],
+  const rows = [['tf', ICON.calendar, 'Período', oanda.tfById(state.tf).label], ['ctype', ctIcon(), 'Tipo de gráfico', CTYPES.find(c => c[0] === core.ctype)?.[1]], ['replay', ICON.replay, 'Replay', replay.active ? 'ativo' : ''],
+    ['recentlist', ICON.list, 'Gráficos recentes', ''], ['volume', ICON.indicators, 'Volume no gráfico', core.volumeVisible ? 'visível' : 'oculto'], ['favorites', ICON.star, 'Desenhos favoritos', store.get('favVisible', false) ? 'visível' : 'oculto'],
     ['alert', ICON.bell, 'Criar alerta', ''], ['alerts', ICON.bell, 'Meus alertas', String(alerts.length || '')], ['goto', ICON.calendar, 'Ir para a data', ''], ['range', ICON.zoom, 'Mostrar tudo', ''], ['theme', core.theme === 'dark' ? ICON.sun : ICON.moon, 'Tema claro/escuro', ''], ['sync', ICON.sync, 'Sincronizar agora', ''], ['settings', ICON.gear, 'Configurações', '']];
   const sh = openModal(head('Mais') + `<div class="sh-body">${rows.map(r => `<div class="mrow" data-m="${r[0]}">${r[1]}<span>${r[2]}</span><span class="r">${esc(r[3] || '')}</span></div>`).join('')}</div>`);
   sh.onclick = e => { const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; closeModal(); if (m === 'range') applyRange('Todos'); else ACT[m]?.(document.body); };
+}
+function openRecent() {
+  const rows = state.recent.map(r => `<div class="it" data-i="${esc(r.i)}" data-tf="${esc(r.tf)}"><div style="display:flex;gap:10px;align-items:center">${symIcon(r.i, 28)}<div><div class="a">${esc(oanda.short(r.i))}</div><div class="b">${esc(oanda.instInfo(r.i).display || '')}</div></div></div><span class="hint">${esc(oanda.tfById(r.tf).label)}</span></div>`).join('');
+  const sh = openModal(head('Gráficos recentes') + `<div class="sh-body list">${rows || '<p class="hint">Nenhum gráfico recente.</p>'}</div>`);
+  sh.querySelector('.list').onclick = e => { const row = e.target.closest('[data-i]'); if (row) { closeModal(); if (isMob()) setTab('chart'); loadSymbol(row.dataset.i, row.dataset.tf); } };
 }
 
 // ---------------- replay ----------------
@@ -388,7 +433,9 @@ function renderReplayBar() {
   document.querySelectorAll('[data-act="replay"]').forEach(b => b.classList.toggle('on', replay.active));
   $('#chart').classList.toggle('selecting', !!replay.selecting);
   if (app) { if (replay.active) app.dataset.replay = '1'; else delete app.dataset.replay; }
-  renderMTabs();
+  renderMTabs(); renderTerminal(); updateLegend();
+  if (!oanda.hasOanda() && !replay.active) ui.banner('Dados simulados', 'Conectar', () => openSettings());
+  else ui.banner(null);
   if (!replay.active) { bar.hidden = true; hideSel(); updateTradePanel(); return; }
   if (!replay.selecting) hideSel();
   const last = core.view().at(-1); const sel = replay.selecting; const mob = isMob();
@@ -484,9 +531,9 @@ function tradeAct(t) {
 }
 
 // ---------------- busca de ativo ----------------
-async function openSymbol() {
-  const sh = openModal(head('Buscar ativo') + `<div class="sh-body"><input class="search" id="q" placeholder="EURUSD, ouro, US30, US10Y…" autocomplete="off">
-    <div class="tabs" id="cats"></div><div class="list" id="res"><p class="hint">Carregando…</p></div></div>`);
+async function openSymbol({ addToWatch = false } = {}) {
+  const sh = openModal(head(addToWatch ? 'Adicionar símbolo' : 'Buscar ativo') + `<div class="sh-body"><input class="search" id="q" placeholder="Pesquisar símbolo ou mercado" aria-label="Pesquisar símbolo ou mercado" autocomplete="off">
+    <div class="tabs" id="cats"></div>${addToWatch ? '<p class="hint">Selecione um ativo para adicioná-lo à lista de observação.</p>' : ''}<div class="list" id="res"><p class="hint">Carregando…</p></div></div>`);
   let list = []; try { list = await oanda.instruments(); } catch (e) { sh.querySelector('#res').innerHTML = `<p class="bad">${esc(e.message)}</p>`; return; }
   const cats = ['Todos', ...new Set(list.map(oanda.category))]; let cat = 'Todos';
   const draw = () => {
@@ -494,8 +541,8 @@ async function openSymbol() {
     const words = { OURO: 'XAU', PRATA: 'XAG', PETROLEO: 'WTICO', DOW: 'US30', NASDAQ: 'NAS100', SP500: 'SPX500', DAX: 'DE30' };
     const qq = words[q] || q;
     const rows = list.filter(i => (cat === 'Todos' || oanda.category(i) === cat) && (!qq || i.name.replace('_', '').includes(qq) || i.display.toUpperCase().replace(/[/ ]/g, '').includes(qq))).slice(0, 200);
-    sh.querySelector('#res').innerHTML = rows.map(i => `<div class="it" data-n="${i.name}"><div style="display:flex;gap:10px;align-items:center">${symIcon(i.name, 26)}<div><div class="a">${esc(oanda.short(i.name))}</div><div class="b">${esc(i.display)} · ${oanda.category(i)}</div></div></div>
-      <div class="r"><button data-w="${i.name}">${state.watch.includes(i.name) ? '★' : '☆'}</button></div></div>`).join('') || '<p class="hint">Nada encontrado.</p>';
+    sh.querySelector('#res').innerHTML = rows.map(i => `<div class="it" data-n="${esc(i.name)}"><div style="display:flex;gap:10px;align-items:center">${symIcon(i.name, 26)}<div><div class="a">${esc(oanda.short(i.name))}</div><div class="b">${esc(i.display)} · ${esc(oanda.category(i))}</div></div></div>
+      <div class="r"><button data-w="${esc(i.name)}" title="Adicionar ou remover da lista" aria-label="Adicionar ou remover ${esc(oanda.short(i.name))} da lista">${state.watch.includes(i.name) ? '★' : '☆'}</button></div></div>`).join('') || '<p class="hint">Nada encontrado.</p>';
   };
   sh.querySelector('#cats').innerHTML = cats.map(c => `<button class="${c === cat ? 'on' : ''}" data-c="${c}">${c}</button>`).join('');
   sh.querySelector('#cats').onclick = e => { const c = e.target.dataset.c; if (!c) return; cat = c; sh.querySelectorAll('#cats button').forEach(b => b.classList.toggle('on', b.dataset.c === c)); draw(); };
@@ -503,7 +550,10 @@ async function openSymbol() {
   sh.querySelector('#res').onclick = e => {
     const w = e.target.closest('[data-w]');
     if (w) { toggleWatch(w.dataset.w); w.textContent = state.watch.includes(w.dataset.w) ? '★' : '☆'; return; }
-    const it = e.target.closest('.it'); if (it) { closeModal(); if (isMob()) setTab('chart'); loadSymbol(it.dataset.n); }
+    const it = e.target.closest('.it'); if (it) {
+      if (addToWatch) { if (!state.watch.includes(it.dataset.n)) toggleWatch(it.dataset.n); closeModal(); pollWatch(); ui.toast('Ativo na lista de observação'); }
+      else { closeModal(); if (isMob()) setTab('chart'); loadSymbol(it.dataset.n); }
+    }
   };
   draw(); setTimeout(() => sh.querySelector('#q').focus(), 50);
 }
@@ -513,7 +563,7 @@ function openTf(anchor) {
   if (!isMob() && anchor && anchor.getBoundingClientRect) {
     const groups = [['Minutos', oanda.TFS.filter(t => t.sec < 3600)], ['Horas', oanda.TFS.filter(t => t.sec >= 3600 && t.sec < 86400)], ['Dias e mais', oanda.TFS.filter(t => t.sec >= 86400)]];
     const items = []; groups.forEach(([h, arr]) => { if (!arr.length) return; items.push({ head: h }); arr.forEach(t => items.push({ label: t.label, on: t.id === state.tf, right: state.favTfs.includes(t.id) ? ICON.starF : ICON.star, rOn: state.favTfs.includes(t.id),
-      onRight: () => { state.favTfs = state.favTfs.includes(t.id) ? state.favTfs.filter(x => x !== t.id) : [...state.favTfs, t.id]; store.set('favTfs', state.favTfs); renderTop(); openTf(anchor); },
+      onRight: () => { state.favTfs = state.favTfs.includes(t.id) ? state.favTfs.filter(x => x !== t.id) : [...state.favTfs, t.id]; store.set('favTfs', state.favTfs); closePop(); renderTop(); openTf($('#top [data-act="tf"]')); },
       onClick: () => loadSymbol(state.instrument, t.id) })); });
     popMenu(anchor, items); return;
   }
@@ -544,21 +594,27 @@ function renderWatch() {
     const p = state.prices[n]; const pc = state.prevClose[n]; const info = oanda.instInfo(n); const prec = info.prec ?? 5;
     const abs = p && pc ? p.mid - pc : null; const pct = abs !== null ? abs / pc * 100 : null; const cls = abs === null ? '' : abs >= 0 ? 'up' : 'down';
     const prev = state.shown[n]; const fl = p && prev !== undefined && p.mid !== prev ? (p.mid > prev ? 'flashU' : 'flashD') : ''; if (p) state.shown[n] = p.mid;
-    return `<div class="wrow ${n === state.instrument ? 'cur' : ''}" data-n="${n}">${symIcon(n, isMob() ? 44 : 18)}<div class="wn"><span class="s">${esc(oanda.short(n))}</span><span class="d">${esc(info.display || '')}</span></div>
-      <div class="wp"><span class="pr ${fl}">${p ? fmtSup(p.mid, prec) : '–'}</span><span class="chg ${cls}"><span class="abs">${abs === null ? '' : (abs >= 0 ? '+' : '') + abs.toFixed(prec)}</span><span class="pct">${pct === null ? '' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></span></div></div>`;
+    return `<button class="wrow ${n === state.instrument ? 'cur' : ''}" data-n="${esc(n)}" aria-pressed="${n === state.instrument}">${symIcon(n, isMob() ? 40 : 23)}<span class="wn"><span class="s">${esc(oanda.short(n))}</span><span class="d">${esc(info.display || '')}</span></span>
+      <span class="wp"><span class="pr ${fl}">${p ? fmtSup(p.mid, prec) : '—'}</span><span class="chg ${cls}"><span class="abs">${abs === null ? '—' : (abs >= 0 ? '+' : '') + abs.toFixed(prec)}</span><span class="pct">${pct === null ? '—' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></span></span></button>`;
   };
-  const body = cats.map(c => `<div class="wsec ${shut[c] ? 'shut' : ''}" data-cat="${esc(c)}">${ICON.chevD}<span>${esc(c)}</span></div>${shut[c] ? '' : groups[c].map(row).join('')}`).join('');
+  const body = cats.map(c => `<button class="wsec ${shut[c] ? 'shut' : ''}" data-cat="${esc(c)}" aria-expanded="${!shut[c]}">${ICON.chevD}<span>${esc(c)}</span><span class="wcount">${groups[c].length}</span></button>${shut[c] ? '' : groups[c].map(row).join('')}`).join('') || '<p class="watch-empty">Sua lista está vazia. Adicione um símbolo acima.</p>';
   let det = '';
-  if (!isMob()) {
+  if (!isMob() && core.instrument === state.instrument) {
     const v = core.view(); const lb = v.at(-1); const info = oanda.instInfo(state.instrument); const prec = info.prec ?? 5; const pb = v.at(-2);
-    if (lb) { const ch = pb ? lb.close - pb.close : 0; const cls = ch >= 0 ? 'up' : 'down';
-      det = `<div class="wdet"><div class="t">${symIcon(state.instrument, 22)}<span>${esc(oanda.short(state.instrument))}</span></div><div class="dd">${esc(info.display || '')} · ${oanda.feedName()}</div>
-        <div class="big">${fmtSup(lb.close, prec)}<small class="${cls}">${ch >= 0 ? '+' : ''}${ch.toFixed(prec)} ${pb ? (ch >= 0 ? '+' : '') + (ch / pb.close * 100).toFixed(2) + '%' : ''}</small></div>
+    if (lb) { const ch = pb ? lb.close - pb.close : 0; const cls = ch >= 0 ? 'up' : 'down'; const pct = pb?.close ? ch / pb.close * 100 : 0;
+      const marker = lb.high > lb.low ? Math.max(0, Math.min(100, (lb.close - lb.low) / (lb.high - lb.low) * 100)) : 50;
+      det = `<div class="wdet"><div class="detail-head">Detalhes do símbolo <span>${esc(core.tf.label)}</span></div>
+        <div class="detail-title">${symIcon(state.instrument, 34)}<div><strong>${esc(oanda.short(state.instrument))}</strong><span>${esc(info.display || '')} · ${oanda.feedName()}</span></div></div>
+        <div class="big">${fmtSup(lb.close, prec)} <small>${esc(quoteUnit(state.instrument))}</small></div>
+        <div class="detail-change ${cls}">${ch >= 0 ? '+' : ''}${ch.toFixed(prec)} <span>(${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)</span></div>
+        <div class="market-label"><i></i>${oanda.hasOanda() ? 'Fonte conectada' : 'Dados de demonstração'}</div>
+        <div class="range-title"><span>Intervalo da barra</span><span>${esc(core.tf.label)}</span></div>
+        <div class="range-values"><span>${lb.low.toFixed(prec)}</span><span>${lb.high.toFixed(prec)}</span></div><div class="range-track"><i style="left:${marker}%"></i></div>
         <div class="ohlc"><span>Abertura<b>${lb.open.toFixed(prec)}</b></span><span>Máxima<b>${lb.high.toFixed(prec)}</b></span><span>Mínima<b>${lb.low.toFixed(prec)}</b></span><span>Fech.<b>${lb.close.toFixed(prec)}</b></span></div></div>`; }
   }
   const keep = w.querySelector('.wl')?.scrollTop || 0;
-  w.innerHTML = `<div class="wh"><span class="wt">${isMob() ? 'Lista de observação' : 'Lista'}</span><span class="wacts"><button data-act="wadd" title="Adicionar ativo">${ICON.plus}</button>${isMob() ? `<button data-act="symbol">${ICON.search}</button>` : `<button data-act="watch" title="Fechar">${ICON.x}</button>`}</span></div>
-    <div class="wcols"><span>Símbolo</span><span>Preço</span><span>Var%</span></div><div class="wl">${body}</div>${det}`;
+  w.innerHTML = `<div class="wh"><span class="wt">Lista de observação</span><span class="wacts"><button data-act="wadd" title="Adicionar ativo" aria-label="Adicionar ativo">${ICON.plus}</button>${isMob() ? `<button data-act="symbol" title="Buscar ativo" aria-label="Buscar ativo">${ICON.search}</button>` : `<button data-act="watch" title="Fechar lista" aria-label="Fechar lista">${ICON.x}</button>`}</span></div>
+    <div class="wcols"><span>Símbolo</span><span>Último</span><span>Var</span><span>Var%</span></div><div class="wl">${body}</div>${det}`;
   const wl = w.querySelector('.wl'); if (wl) wl.scrollTop = keep;
 }
 async function pollWatch() {
@@ -577,9 +633,9 @@ setInterval(pollWatch, 3000);
 function setCross(mode) { store.set('cross', mode); core.chart.applyOptions({ crosshair: { mode: mode === 'arrow' ? 2 : mode === 'dot' ? 1 : 0 } }); }
 function openCursorMenu(el) {
   const cur = store.get('cross', 'cross');
-  popMenu(el, [{ label: 'Cruz', icon: toolSvg('cursor').replace(/<path[^>]*\/>/, '<path d="M12 4v16M4 12h16"/>'), on: cur === 'cross', onClick: () => { setCross('cross'); drawings.setTool('cursor'); } },
+  popMenu(el, [{ label: 'Cruz', icon: ICON.crosshair, on: cur === 'cross', onClick: () => { setCross('cross'); drawings.setTool('cursor'); } },
     { label: 'Ponto (gruda no preço)', icon: ICON.magnet, on: cur === 'dot', onClick: () => { setCross('dot'); drawings.setTool('cursor'); } },
-    { label: 'Seta', icon: toolSvg('cursor'), on: cur === 'arrow', onClick: () => { setCross('arrow'); drawings.setTool('cursor'); } },
+    { label: 'Seta', icon: ICON.pointer, on: cur === 'arrow', onClick: () => { setCross('arrow'); drawings.setTool('cursor'); } },
     { hr: true }, { label: 'Borracha', icon: toolSvg('eraser'), on: drawings.tool === 'eraser', onClick: () => drawings.setTool('eraser') }], { side: 'right' });
 }
 
@@ -590,12 +646,32 @@ const ACT = {
   tfset: el => loadSymbol(state.instrument, el.dataset.tf),
   ctype: el => openCtype(el),
   ind: () => openIndicators(),
+  editor: () => openEditor({ name: 'Meu script', source: `//@version=5\nindicator("Meu script", overlay=true)\nplot(ta.ema(close, 20), "EMA 20", color=color.orange)\n` }),
   replay: () => toggleReplay(),
   undo: () => drawings.undo(),
   redo: () => drawings.redo(),
+  volume: () => { core.setVolumeVisible(!core.volumeVisible); updateLegend(); },
+  favorites: () => { store.set('favVisible', !store.get('favVisible', false)); renderFav(); renderTools(); },
+  recentlist: () => openRecent(),
   theme: () => { const t = core.theme === 'dark' ? 'light' : 'dark'; core.applyTheme(t); document.documentElement.dataset.theme = t; drawings.update(); syncChrome(); },
   settings: () => openSettings(),
   watch: () => toggleWatchPanel(),
+  fullscreen: async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+      else ui.toast('Tela cheia não disponível neste aparelho');
+    } catch { ui.toast('Não foi possível abrir a tela cheia'); }
+  },
+  snapshot: () => {
+    try {
+      // O download é iniciado no próprio gesto do usuário (inclusive em WebViews).
+      const a = document.createElement('a');
+      a.href = core.chart.takeScreenshot().toDataURL('image/png');
+      a.download = `grafico-${oanda.short(state.instrument)}.png`;
+      document.body.appendChild(a); a.click(); setTimeout(() => a.remove(), 1000);
+    } catch { ui.toast('Não foi possível salvar a imagem'); }
+  },
   tab: el => {
     const t = el.dataset.t;
     if (t === 'watch' || t === 'chart') setTab(t); else if (t === 'replay') toggleReplay(); else if (t === 'scripts') openIndicators(); else if (t === 'menu') openSettings();
@@ -620,7 +696,7 @@ const ACT = {
     ui.toast('Sincronizando…'); sync.sync().then(ch => ui.toast(ch ? 'Sincronizado' : 'Tudo em dia')).catch(e => ui.toast(e.message));
   },
   recent: el => { if (isMob()) setTab('chart'); loadSymbol(el.dataset.i, el.dataset.tf); },
-  wadd: () => openSymbol(),
+  wadd: () => openSymbol({ addToWatch: true }),
 };
 function bindEvents() {
   document.addEventListener('click', e => {
@@ -768,7 +844,7 @@ document.addEventListener('keydown', e => {
 });
 
 // ---------------- layout (PC deitado / celular em pé) ----------------
-function syncChrome() { renderTop(); renderMBot(); renderMTabs(); renderRbar(); updateUndo(); }
+function syncChrome() { renderTop(); renderMBot(); renderMTabs(); renderRbar(); renderTerminal(); updateUndo(); }
 function applyLayout(force) {
   const l = mqDesk.matches ? 'desk' : 'mob'; const changed = document.documentElement.dataset.layout !== l;
   document.documentElement.dataset.layout = l;
@@ -1015,7 +1091,6 @@ bindSelect(); bindEvents(); bindLongPress();
 setCross(store.get('cross', 'cross'));
 applyLayout(true);
 pollWatch();
-if (!oanda.hasOanda()) ui.banner('Modo demonstração — conecte sua conta cTrader para preços reais', 'Conectar', () => { ui.banner(null); openSettings(); });
 loadSymbol(state.instrument, state.tf);
 document.addEventListener('visibilitychange', () => { if (document.hidden) core.stopLive(); else if (!replay.active) core.startLive(); });
 // botão voltar do Android: fecha janelas antes de sair do app

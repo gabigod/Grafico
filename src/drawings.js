@@ -3,7 +3,7 @@ import { store, uid } from './store.js';
 import { instInfo } from './oanda.js';
 
 export const TOOLS = [
-  { id: 'cursor', name: 'Cursor', icon: '<path d="M5 3l14 8-6 1.5L10 19z"/>' },
+  { id: 'cursor', name: 'Cursor', icon: '<path d="M12 2v7M12 15v7M2 12h7M15 12h7"/><circle cx="12" cy="12" r="1"/>' },
   { id: 'trend', name: 'Linha de tendência', pts: 2, icon: '<path d="M4 19L20 5"/><circle cx="4" cy="19" r="1.6"/><circle cx="20" cy="5" r="1.6"/>' },
   { id: 'ray', name: 'Raio', pts: 2, icon: '<path d="M4 19L21 4"/><circle cx="4" cy="19" r="1.6"/><circle cx="11" cy="13" r="1.6"/>' },
   { id: 'extended', name: 'Linha estendida', pts: 2, icon: '<path d="M2 21L22 3"/><circle cx="9" cy="15" r="1.6"/><circle cx="15" cy="9" r="1.6"/>' },
