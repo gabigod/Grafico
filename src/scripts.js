@@ -8,6 +8,9 @@ import { hasNative, runNative } from './native.js';
 import srcCSA from './pine/currency-strength-atr-yield.pine?raw';
 import srcYSA from './pine/yield-strength-agregado.pine?raw';
 import srcYSP from './pine/yield-strength-par.pine?raw';
+import oldCSA from './pine/legacy/currency-strength-atr-yield.pine?raw';
+import oldYSA from './pine/legacy/yield-strength-agregado.pine?raw';
+import oldYSP from './pine/legacy/yield-strength-par.pine?raw';
 
 const YF = `f(cur) => cur == "USD" ? "US" : cur == "EUR" ? "DE" : cur == "GBP" ? "GB" : cur == "JPY" ? "JP" : cur == "AUD" ? "AU" : cur == "CAD" ? "CA" : cur == "CHF" ? "CH" : cur == "NZD" ? "NZ" : "US"`;
 // indicadores do Tem: vêm prontos no app (o primeiro já entra ativo)
@@ -114,6 +117,16 @@ export class Scripts {
     if (!store.get('pinedefaults:v1', false)) {
       for (const d of MY_DEFAULTS.filter(x => x.auto)) if (!this.active.some(a => a.name === d.name)) this.active.push({ id: uid(), name: d.name, source: d.source, inputs: {}, visible: true });
       store.set('pinedefaults:v1', true); this.saveActive();
+    }
+    // v2: versões enxutas (sem tabelas/placar de força). Troca o código antigo pelo novo, mantendo os ajustes.
+    if (!store.get('pinedefaults:v2', false)) {
+      const n = x => String(x || '').replace(/\r\n?/g, '\n').trim();
+      const map = [[oldCSA, srcCSA], [oldYSA, srcYSA], [oldYSP, srcYSP]];
+      for (const a of this.active) {
+        const hit = map.find(([o]) => n(o) === n(a.source)) || (MY_DEFAULTS.find(d => d.name === a.name) && [null, MY_DEFAULTS.find(d => d.name === a.name).source]);
+        if (hit) a.source = hit[1];
+      }
+      store.set('pinedefaults:v2', true); this.saveActive();
     }
     core.on('beforeMainRemove', () => { this.mainMarkers?.detach?.(); this.mainMarkers = null; this.clearRendered(); });
     core.on('mainSeries', () => this.renderAll());

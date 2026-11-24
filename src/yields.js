@@ -103,6 +103,15 @@ export async function candles(name, gran, { count = 2000, to, chartTimes } = {})
     }
     for (const [k, v] of local) if (!map.has(k)) map.set(k, v);
   }
+  // a CNBC só tem poucos dias de dados intradiários: o passado mais antigo vem das faixas mais longas (diário)
+  if (map.size) {
+    let first = Math.min(...map.keys());
+    for (const g of got.filter(x => !use.includes(x)).sort((a, b) => a.iv - b.iv)) {
+      let added = 0;
+      for (const b of g.bars) { const k = bucket(b.t, gran, tfSec); if (k < first && !map.has(k)) { map.set(k, { time: k, ot: k, open: b.o, high: b.h, low: b.l, close: b.c, volume: 0, complete: true }); added++; } }
+      if (added) first = Math.min(...map.keys());
+    }
+  }
   let bars = [...map.values()].sort((a, b) => a.time - b.time);
   if (chartTimes) {
     // alinhado às barras do gráfico, repetindo o último valor (gaps_off do TradingView)

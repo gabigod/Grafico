@@ -1,0 +1,373 @@
+//@version=5
+indicator("Currency Strength + ATR + Yield Arrows", overlay=true)
+
+// ================= STRENGTH INPUTS =================
+emaLength1  = input.int(54,  "MA 1")
+emaLength2  = input.int(120, "MA 2")
+emaLength3  = input.int(300, "MA 3")
+maType1     = input.string("EMA", "Tipo MA 1", options=["EMA","SMA"])
+maType2     = input.string("EMA", "Tipo MA 2", options=["EMA","SMA"])
+maType3     = input.string("EMA", "Tipo MA 3", options=["EMA","SMA"])
+strengthGap = input.int(5, "Minimum Strength Difference")
+
+assetCurrencyInput = input.string("AUTO", "Moeda do Ativo",
+     options=["AUTO","USD","EUR","GBP","JPY","AUD","NZD","CAD","CHF"])
+
+ma_tf = input.timeframe("240", "MA Timeframe (blank = chart)")
+tf_ma = ma_tf == "" ? timeframe.period : ma_tf
+
+// ================= COLORAÇÃO DAS MAs =================
+ma_color_mode = input.string("Força de Moedas", "Coloração das MAs",
+     options=["Força de Moedas", "Yield"],
+     tooltip="Força de Moedas: cor pelo score da tabela | Yield: cor pelo diferencial de yield base − cotada (EMA do yield, igual às setas)",
+     group="Strength")
+
+// ================= ATR BAND 1 INPUTS =================
+show_atr_bands     = input.bool(true,  "Mostrar ATR Band 1",                     group="ATR Band 1")
+atr_len            = input.int(14,     "ATR Length",                            group="ATR Band 1")
+atr_mult           = input.float(2.0,  "ATR Multiplier", step=0.1,              group="ATR Band 1")
+atr_smoothing      = input.string("RMA", "ATR Smoothing", options=["RMA","SMA","EMA","WMA"], group="ATR Band 1")
+show_atr_break     = input.bool(true,  "Mostrar Candles que Rompem Band 1",      group="ATR Band 1")
+atr_break_use_wick = input.bool(true,  "Detectar por pavio (high/low) em vez de close", group="ATR Band 1")
+
+// ================= ATR BAND 2 INPUTS =================
+show_atr_bands2     = input.bool(true,  "Mostrar ATR Band 2",                    group="ATR Band 2")
+atr_len2            = input.int(50,     "ATR Length",                           group="ATR Band 2")
+atr_mult2           = input.float(4.0,  "ATR Multiplier", step=0.1,             group="ATR Band 2")
+atr_smoothing2      = input.string("RMA", "ATR Smoothing", options=["RMA","SMA","EMA","WMA"], group="ATR Band 2")
+show_atr_break2     = input.bool(true,  "Mostrar Candles que Rompem Band 2",     group="ATR Band 2")
+atr_break_use_wick2 = input.bool(true,  "Detectar por pavio (high/low) em vez de close", group="ATR Band 2")
+
+// ================= BAR COLOR SOURCE =================
+barcolor_source = input.string("Band 1", "ATR usado para colorir o candle", options=["Band 1","Band 2"], group="Bar Color")
+
+// ================= TREND FILTER (usado no score de força, não em sinais) =================
+trend_filter        = input.string("MA Cruzamento", "Filtro de Tendência",
+     options=["Preço vs MA", "MA Cruzamento"],
+     tooltip="Preço vs MA: candle acima/abaixo da MA2 | MA Cruzamento: MA1 acima/abaixo da MA2",
+     group="Strength")
+ma_cross_ref        = input.string("MA1 x MA2", "MA Cruzamento Referência",
+     options=["MA1 x MA2", "MA1 x MA3"],
+     tooltip="MA1 x MA2: mais reativo (54x120) | MA1 x MA3: mais lento e estrutural (54x300)",
+     group="Strength")
+
+// ================= YIELD ARROWS INPUTS =================
+yield_tf       = input.timeframe("60",  "Yield Timeframe", group="Yield Arrows")
+yield_ema_tf   = input.timeframe("60",  "EMA/Diário Timeframe", group="Yield Arrows")
+maturity       = input.string("10Y", "Yield Maturity", options=["02Y","05Y","10Y"], group="Yield Arrows")
+yield_mode     = input.string("Média (EMA)", "Modo do Yield",
+     options=["Média (EMA)", "Diário (sem média)"],
+     tooltip="Média (EMA): compara EMA curta x EMA longa do yield agregado | Diário: compara o valor do yield de hoje contra o do período anterior, sem suavização",
+     group="Yield Arrows")
+yield_ema_fast = input.int(120, "EMA Curta (só modo Média)", group="Yield Arrows")
+yield_ema_slow = input.int(216, "EMA Longa (só modo Média)", group="Yield Arrows")
+yield_minBars  = input.int(3,   "Mínimo de barras viradas pra confirmar", minval=1, group="Yield Arrows")
+
+// ================= MA FUNCTION =================
+ma(src, len, type) =>
+    type == "EMA" ? ta.ema(src, len) : ta.sma(src, len)
+
+// ================= ATR FUNCTION =================
+maSmooth(src, len, type) =>
+    switch type
+        "RMA" => ta.rma(src, len)
+        "SMA" => ta.sma(src, len)
+        "EMA" => ta.ema(src, len)
+        "WMA" => ta.wma(src, len)
+
+// ================= PAIR =================
+base  = str.length(syminfo.ticker) >= 6 ? str.substring(syminfo.ticker, 0, 3) : "USD"
+quote = str.length(syminfo.ticker) >= 6 ? str.substring(syminfo.ticker, 3, 6) : "USD"
+
+// ================= MAs DO ATIVO =================
+[ma1, ma2, ma3, htfOpen, htfClose] = request.security(syminfo.tickerid, tf_ma,
+     [ma(close, emaLength1, maType1),
+      ma(close, emaLength2, maType2),
+      ma(close, emaLength3, maType3),
+      open, close])
+
+// ================= ATR BAND 1 (BASE = PREÇO) =================
+atrVal   = maSmooth(ta.tr(true), atr_len, atr_smoothing)
+atrUpper = close + atrVal * atr_mult
+atrLower = close - atrVal * atr_mult
+
+plot(show_atr_bands ? atrUpper : na, title="ATR1 Upper Band", color=color.new(color.silver, 40), linewidth=1)
+plot(show_atr_bands ? atrLower : na, title="ATR1 Lower Band", color=color.new(color.silver, 40), linewidth=1)
+
+bear_break_upper = close < open and (atr_break_use_wick ? high  > atrUpper : close > atrUpper)
+bull_break_lower = close > open and (atr_break_use_wick ? low   < atrLower : close < atrLower)
+
+alertcondition(bear_break_upper, title="Baixa rompendo ATR1 Upper", message="Candle de baixa rompeu a banda superior do ATR 1")
+alertcondition(bull_break_lower, title="Alta rompendo ATR1 Lower",  message="Candle de alta rompeu a banda inferior do ATR 1")
+
+// ================= ATR BAND 2 (BASE = PREÇO) =================
+atrVal2   = maSmooth(ta.tr(true), atr_len2, atr_smoothing2)
+atrUpper2 = close + atrVal2 * atr_mult2
+atrLower2 = close - atrVal2 * atr_mult2
+
+plot(show_atr_bands2 ? atrUpper2 : na, title="ATR2 Upper Band", color=color.new(color.orange, 40), linewidth=1)
+plot(show_atr_bands2 ? atrLower2 : na, title="ATR2 Lower Band", color=color.new(color.orange, 40), linewidth=1)
+
+bear_break_upper2 = close < open and (atr_break_use_wick2 ? high  > atrUpper2 : close > atrUpper2)
+bull_break_lower2 = close > open and (atr_break_use_wick2 ? low   < atrLower2 : close < atrLower2)
+
+alertcondition(bear_break_upper2, title="Baixa rompendo ATR2 Upper", message="Candle de baixa rompeu a banda superior do ATR 2")
+alertcondition(bull_break_lower2, title="Alta rompendo ATR2 Lower",  message="Candle de alta rompeu a banda inferior do ATR 2")
+
+// ================= DUAL TREND — score da tabela =================
+dualTrend(sym) =>
+    [tA, tB] = request.security(sym, tf_ma,
+         [trend_filter == "MA Cruzamento" ?
+              (ma_cross_ref == "MA1 x MA3" ?
+                   (ma(close, emaLength1, maType1) > ma(close, emaLength3, maType3) ? 1 : -1) :
+                   (ma(close, emaLength1, maType1) > ma(close, emaLength2, maType2) ? 1 : -1)) :
+              (close > ma(close, emaLength2, maType2) ? 1 : -1),
+          trend_filter == "MA Cruzamento" ?
+              (ma_cross_ref == "MA1 x MA3" ?
+                   (ma(close, emaLength1, maType1) > ma(close, emaLength3, maType3) ? 1 : -1) :
+                   (ma(close, emaLength1, maType1) > ma(close, emaLength2, maType2) ? 1 : -1)) :
+              (close > ma(close, emaLength2, maType2) ? 1 : -1)])
+    [tA, tB]
+
+USD_A = 0.0, EUR_A = 0.0, GBP_A = 0.0, JPY_A = 0.0
+AUD_A = 0.0, NZD_A = 0.0, CAD_A = 0.0, CHF_A = 0.0
+
+float tA = na
+float tB = na
+
+[r1a,r1b]   = dualTrend("EURUSD")
+tA:=r1a, tB:=r1b,   EUR_A+=tA, USD_A-=tA
+[r2a,r2b]   = dualTrend("GBPUSD")
+tA:=r2a, tB:=r2b,   GBP_A+=tA, USD_A-=tA
+[r3a,r3b]   = dualTrend("AUDUSD")
+tA:=r3a, tB:=r3b,   AUD_A+=tA, USD_A-=tA
+[r4a,r4b]   = dualTrend("NZDUSD")
+tA:=r4a, tB:=r4b,   NZD_A+=tA, USD_A-=tA
+[r5a,r5b]   = dualTrend("USDCAD")
+tA:=r5a, tB:=r5b,   USD_A+=tA, CAD_A-=tA
+[r6a,r6b]   = dualTrend("USDCHF")
+tA:=r6a, tB:=r6b,   USD_A+=tA, CHF_A-=tA
+[r7a,r7b]   = dualTrend("USDJPY")
+tA:=r7a, tB:=r7b,   USD_A+=tA, JPY_A-=tA
+[r8a,r8b]   = dualTrend("EURGBP")
+tA:=r8a, tB:=r8b,   EUR_A+=tA, GBP_A-=tA
+[r9a,r9b]   = dualTrend("EURAUD")
+tA:=r9a, tB:=r9b,   EUR_A+=tA, AUD_A-=tA
+[r10a,r10b] = dualTrend("EURNZD")
+tA:=r10a, tB:=r10b, EUR_A+=tA, NZD_A-=tA
+[r11a,r11b] = dualTrend("EURCAD")
+tA:=r11a, tB:=r11b, EUR_A+=tA, CAD_A-=tA
+[r12a,r12b] = dualTrend("EURCHF")
+tA:=r12a, tB:=r12b, EUR_A+=tA, CHF_A-=tA
+[r13a,r13b] = dualTrend("EURJPY")
+tA:=r13a, tB:=r13b, EUR_A+=tA, JPY_A-=tA
+[r14a,r14b] = dualTrend("GBPAUD")
+tA:=r14a, tB:=r14b, GBP_A+=tA, AUD_A-=tA
+[r15a,r15b] = dualTrend("GBPNZD")
+tA:=r15a, tB:=r15b, GBP_A+=tA, NZD_A-=tA
+[r16a,r16b] = dualTrend("GBPCAD")
+tA:=r16a, tB:=r16b, GBP_A+=tA, CAD_A-=tA
+[r17a,r17b] = dualTrend("GBPCHF")
+tA:=r17a, tB:=r17b, GBP_A+=tA, CHF_A-=tA
+[r18a,r18b] = dualTrend("GBPJPY")
+tA:=r18a, tB:=r18b, GBP_A+=tA, JPY_A-=tA
+[r19a,r19b] = dualTrend("AUDNZD")
+tA:=r19a, tB:=r19b, AUD_A+=tA, NZD_A-=tA
+[r20a,r20b] = dualTrend("AUDCAD")
+tA:=r20a, tB:=r20b, AUD_A+=tA, CAD_A-=tA
+[r21a,r21b] = dualTrend("AUDCHF")
+tA:=r21a, tB:=r21b, AUD_A+=tA, CHF_A-=tA
+[r22a,r22b] = dualTrend("AUDJPY")
+tA:=r22a, tB:=r22b, AUD_A+=tA, JPY_A-=tA
+[r23a,r23b] = dualTrend("NZDCAD")
+tA:=r23a, tB:=r23b, NZD_A+=tA, CAD_A-=tA
+[r24a,r24b] = dualTrend("NZDCHF")
+tA:=r24a, tB:=r24b, NZD_A+=tA, CHF_A-=tA
+[r25a,r25b] = dualTrend("NZDJPY")
+tA:=r25a, tB:=r25b, NZD_A+=tA, JPY_A-=tA
+[r26a,r26b] = dualTrend("CADCHF")
+tA:=r26a, tB:=r26b, CAD_A+=tA, CHF_A-=tA
+[r27a,r27b] = dualTrend("CADJPY")
+tA:=r27a, tB:=r27b, CAD_A+=tA, JPY_A-=tA
+[r28a,r28b] = dualTrend("CHFJPY")
+tA:=r28a, tB:=r28b, CHF_A+=tA, JPY_A-=tA
+
+// ================= STRENGTH =================
+USD = USD_A, EUR = EUR_A, GBP = GBP_A, JPY = JPY_A
+AUD = AUD_A, NZD = NZD_A, CAD = CAD_A, CHF = CHF_A
+
+baseStrength  = base=="USD"?USD:base=="EUR"?EUR:base=="GBP"?GBP:base=="JPY"?JPY:base=="AUD"?AUD:base=="NZD"?NZD:base=="CAD"?CAD:base=="CHF"?CHF:na
+quoteStrength = quote=="USD"?USD:quote=="EUR"?EUR:quote=="GBP"?GBP:quote=="JPY"?JPY:quote=="AUD"?AUD:quote=="NZD"?NZD:quote=="CAD"?CAD:quote=="CHF"?CHF:na
+
+diff    = baseStrength - quoteStrength
+isForex = not na(baseStrength) and not na(quoteStrength)
+
+assetCurrency = USD
+if assetCurrencyInput != "AUTO"
+    assetCurrency :=
+         assetCurrencyInput=="USD"?USD:assetCurrencyInput=="EUR"?EUR:
+         assetCurrencyInput=="GBP"?GBP:assetCurrencyInput=="JPY"?JPY:
+         assetCurrencyInput=="AUD"?AUD:assetCurrencyInput=="NZD"?NZD:
+         assetCurrencyInput=="CAD"?CAD:assetCurrencyInput=="CHF"?CHF:USD
+else
+    if str.contains(syminfo.ticker,"EUR")
+        assetCurrency := EUR
+    else if str.contains(syminfo.ticker,"GBP")
+        assetCurrency := GBP
+    else if str.contains(syminfo.ticker,"JPY")
+        assetCurrency := JPY
+    else if str.contains(syminfo.ticker,"AUD")
+        assetCurrency := AUD
+    else if str.contains(syminfo.ticker,"CAD")
+        assetCurrency := CAD
+    else
+        assetCurrency := USD
+
+// ================= YIELD — funções =================
+f_yieldSymbol(curr) =>
+    baseSym = switch curr
+        "USD" => "US"
+        "EUR" => "DE"
+        "JPY" => "JP"
+        "GBP" => "GB"
+        "CHF" => "CH"
+        "AUD" => "AU"
+        "NZD" => "NZ"
+        "CAD" => "CA"
+        => ""
+    baseSym == "" ? "" : "TVC:" + baseSym + maturity
+
+getYield(curr) =>
+    request.security(f_yieldSymbol(curr), yield_tf, close)
+
+// === YIELDS (8 securities) ===
+y_USD = getYield("USD")
+y_EUR = getYield("EUR")
+y_GBP = getYield("GBP")
+y_JPY = getYield("JPY")
+y_AUD = getYield("AUD")
+y_NZD = getYield("NZD")
+y_CAD = getYield("CAD")
+y_CHF = getYield("CHF")
+
+getAgregado(m) =>
+    float result = na
+    if m == "USD"
+        result := y_USD - (y_EUR+y_GBP+y_JPY+y_AUD+y_NZD+y_CAD+y_CHF)/7
+    else if m == "EUR"
+        result := y_EUR - (y_USD+y_GBP+y_JPY+y_AUD+y_NZD+y_CAD+y_CHF)/7
+    else if m == "GBP"
+        result := y_GBP - (y_USD+y_EUR+y_JPY+y_AUD+y_NZD+y_CAD+y_CHF)/7
+    else if m == "JPY"
+        result := y_JPY - (y_USD+y_EUR+y_GBP+y_AUD+y_NZD+y_CAD+y_CHF)/7
+    else if m == "AUD"
+        result := y_AUD - (y_USD+y_EUR+y_GBP+y_JPY+y_NZD+y_CAD+y_CHF)/7
+    else if m == "NZD"
+        result := y_NZD - (y_USD+y_EUR+y_GBP+y_JPY+y_AUD+y_CAD+y_CHF)/7
+    else if m == "CAD"
+        result := y_CAD - (y_USD+y_EUR+y_GBP+y_JPY+y_AUD+y_NZD+y_CHF)/7
+    else
+        result := y_CHF - (y_USD+y_EUR+y_GBP+y_JPY+y_AUD+y_NZD+y_CAD)/7
+    result
+
+// Yield bruto de uma moeda (reaproveita os 8 securities já calculados)
+f_yld(curr) =>
+    switch curr
+        "USD" => y_USD
+        "EUR" => y_EUR
+        "GBP" => y_GBP
+        "JPY" => y_JPY
+        "AUD" => y_AUD
+        "NZD" => y_NZD
+        "CAD" => y_CAD
+        "CHF" => y_CHF
+        => float(na)
+
+// Modo Média: compara EMA curta x EMA longa do yield agregado.
+// Modo Diário: compara o valor de hoje contra o do período anterior, sem suavização nenhuma.
+// Os dois alimentam o mesmo contador de barras consecutivas (yield_minBars).
+trendCalc(spreadSrc, fastLen, slowLen, minB, useEma) =>
+    var int bUp = 0
+    var int bDown = 0
+    rising  = useEma ? ta.ema(spreadSrc, fastLen) > ta.ema(spreadSrc, slowLen) : spreadSrc > spreadSrc[1]
+    falling = useEma ? ta.ema(spreadSrc, fastLen) < ta.ema(spreadSrc, slowLen) : spreadSrc < spreadSrc[1]
+    if rising
+        bUp := bUp + 1
+        bDown := 0
+    else if falling
+        bDown := bDown + 1
+        bUp := 0
+    [bUp >= minB, bDown >= minB]
+
+useEma = yield_mode == "Média (EMA)"
+
+// ================= YIELD — moeda BASE (embaixo do candle) =================
+[baseYieldUp, baseYieldDown] = request.security(syminfo.tickerid, yield_ema_tf,
+     trendCalc(getAgregado(base), yield_ema_fast, yield_ema_slow, yield_minBars, useEma))
+
+// ================= YIELD — moeda QUOTE (em cima do candle) =================
+[quoteYieldUp, quoteYieldDown] = request.security(syminfo.tickerid, yield_ema_tf,
+     trendCalc(getAgregado(quote), yield_ema_fast, yield_ema_slow, yield_minBars, useEma))
+
+// ================= YIELD — DIFERENCIAL BASE x COTADA (coloração das MAs) =================
+// Ex.: EURUSD => yield EUR − yield USD. Mesma lógica da seta (EMA curta x longa ou modo diário).
+yieldDiff = f_yld(base) - f_yld(quote)
+
+[diffYieldUp, diffYieldDown] = request.security(syminfo.tickerid, yield_ema_tf,
+     trendCalc(yieldDiff, yield_ema_fast, yield_ema_slow, yield_minBars, useEma))
+
+// ================= MA COLOR =================
+maColor = color.gray
+
+if ma_color_mode == "Yield"
+    if diffYieldUp
+        maColor := color.blue
+    else if diffYieldDown
+        maColor := color.red
+else
+    if isForex
+        if diff >= strengthGap
+            maColor := color.blue
+        else if diff <= -strengthGap
+            maColor := color.red
+    else
+        if assetCurrency >= strengthGap
+            maColor := color.red
+        else if assetCurrency <= -strengthGap
+            maColor := color.blue
+
+plot(ma1, color=maColor, linewidth=2)
+plot(ma2, color=maColor, linewidth=3)
+plot(ma3, color=maColor, linewidth=1)
+
+// ================= BARCOLOR =================
+breakColor = barcolor_source == "Band 1" ?
+     (show_atr_break and bear_break_upper ? color.new(color.yellow, 0) :
+      show_atr_break and bull_break_lower ? color.new(color.aqua, 0)   : na) :
+     (show_atr_break2 and bear_break_upper2 ? color.new(color.yellow, 0) :
+      show_atr_break2 and bull_break_lower2 ? color.new(color.aqua, 0)   : na)
+
+barcolor(breakColor)
+
+// ================= TABELA (trend por preço) =================
+var table painel = table.new(position.bottom_right, 2, 9)
+
+colorFor(v) => v > 0 ? color.lime : color.red
+
+if barstate.islast
+    table.cell(painel,0,0,"Moeda", bgcolor=color.gray, text_color=color.white)
+    table.cell(painel,1,0,"Score", bgcolor=color.gray, text_color=color.white)
+
+    curNames = array.from("USD","EUR","GBP","JPY","AUD","NZD","CAD","CHF")
+    vals     = array.from(USD_A,EUR_A,GBP_A,JPY_A,AUD_A,NZD_A,CAD_A,CHF_A)
+
+    for i = 0 to 7
+        v = array.get(vals, i)
+        table.cell(painel,0,i+1,array.get(curNames,i))
+        table.cell(painel,1,i+1,str.tostring(v),text_color=colorFor(v))
+
+// ================= SETAS DE YIELD =================
+plotshape(baseYieldUp,    title="Yield Base Subindo",  location=location.belowbar, style=shape.triangleup,   color=color.lime, size=size.tiny)
+plotshape(baseYieldDown,  title="Yield Base Caindo",   location=location.belowbar, style=shape.triangledown, color=color.red,  size=size.tiny)
+plotshape(quoteYieldUp,   title="Yield Quote Subindo", location=location.abovebar, style=shape.triangleup,   color=color.lime, size=size.tiny)
+plotshape(quoteYieldDown, title="Yield Quote Caindo",  location=location.abovebar, style=shape.triangledown, color=color.red,  size=size.tiny)
