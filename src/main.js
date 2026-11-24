@@ -195,6 +195,7 @@ function updateLegend() {
     if (r?.error) html += `<span class="err">erro: ${esc(r.error)}</span>`;
     else if (!r) html += `<span class="k">…</span>`;
     else html += r.vals.slice(0, 5).map(x => `<span class="v" style="color:${x.color}">${fmtVal(x.v, r.overlay ? prec : undefined)}</span>`).join('');
+    if (r?.warn) html += `<span class="err">${esc(r.warn)}</span>`;
     html += `<button class="eyeb" data-a="eye" title="Mostrar/ocultar">${s.visible ? ICON.eye : ICON.eyeOff}</button><span class="acts"><button data-a="eye" title="Mostrar/ocultar">${ICON.eye}</button><button data-a="set" title="Configurar">${ICON.gear}</button><button data-a="code" title="Código">${ICON.code}</button><button data-a="del" title="Remover">${ICON.trash}</button></span></div>`;
   }
   if (scripts.active.length) html += `<button class="collapse" data-a="collapse">${legendCollapsed ? ICON.chevD : ICON.chevU}</button>`;
@@ -788,7 +789,7 @@ function openIndicators() {
     <div class="sec-t">Meus scripts</div><div class="list" id="mine"></div>
     <div class="sec-t">Padrões</div><div class="list" id="blt"></div></div>`);
   const draw = () => {
-    sh.querySelector('#act').innerHTML = scripts.active.map(s => `<div class="it" data-id="${s.id}"><div><div class="a">${esc(s.name)}</div>${scripts.results[s.id]?.error ? `<div class="b bad">${esc(scripts.results[s.id].error)}</div>` : ''}</div>
+    sh.querySelector('#act').innerHTML = scripts.active.map(s => `<div class="it" data-id="${s.id}"><div><div class="a">${esc(s.name)}</div>${scripts.results[s.id]?.error ? `<div class="b bad">${esc(scripts.results[s.id].error)}</div>` : scripts.results[s.id]?.warn ? `<div class="b bad">${esc(scripts.results[s.id].warn)}</div>` : ''}</div>
       <div class="r"><button data-a="set">Ajustes</button><button data-a="code">Código</button><button data-a="del">Remover</button></div></div>`).join('') || '<p class="hint">Nenhum indicador.</p>';
     sh.querySelector('#mine').innerHTML = scripts.lib.map((s, k) => `<div class="it" data-k="${k}"><div class="a">${esc(s.name)}</div><div class="r"><button data-a="add">Adicionar</button><button data-a="code">Editar</button><button data-a="del">Apagar</button></div></div>`).join('') || '<p class="hint">Os scripts que você salvar aparecem aqui.</p>';
     sh.querySelector('#blt').innerHTML = BUILTINS.map((s, k) => `<div class="it" data-b="${k}"><div class="a">${esc(s.name)}</div><div class="r"><button data-a="add">Adicionar</button></div></div>`).join('');
@@ -846,7 +847,9 @@ function openEditor({ name, source, activeId, libIndex }) {
 }
 function openInputs(s) {
   const meta = scripts.inputsMeta(s.source).filter(m => m.type !== 'session' && m.type !== 'time');
-  const key = m => m.title || m.id;
+  // título repetido (ex.: dois "ATR Length") → usa o id, senão um campo mudaria o outro
+  const dupT = new Set(meta.map(m => m.title).filter((t, i, arr) => t && arr.indexOf(t) !== i));
+  const key = m => (m.title && !dupT.has(m.title) ? m.title : m.id);
   const val = m => s.inputs?.[key(m)] ?? m.defval;
   const field = (m, k) => {
     const v = val(m); const lbl = esc(m.title || m.name || m.id);

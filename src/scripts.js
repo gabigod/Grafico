@@ -4,9 +4,20 @@ import { LineSeries, HistogramSeries, AreaSeries, LineStyle, LineType, createSer
 import * as oanda from './oanda.js';
 import { store, uid } from './store.js';
 import { getBars, putBars } from './barcache.js';
+import { hasNative, runNative } from './native.js';
+import srcCSA from './pine/currency-strength-atr-yield.pine?raw';
+import srcYSA from './pine/yield-strength-agregado.pine?raw';
+import srcYSP from './pine/yield-strength-par.pine?raw';
 
 const YF = `f(cur) => cur == "USD" ? "US" : cur == "EUR" ? "DE" : cur == "GBP" ? "GB" : cur == "JPY" ? "JP" : cur == "AUD" ? "AU" : cur == "CAD" ? "CA" : cur == "CHF" ? "CH" : cur == "NZD" ? "NZ" : "US"`;
+// indicadores do Tem: vêm prontos no app (o primeiro já entra ativo)
+export const MY_DEFAULTS = [
+  { name: 'Currency Strength + ATR + Yield Arrows', source: srcCSA, auto: true },
+  { name: 'Yield Strength (agregado da moeda)', source: srcYSA },
+  { name: 'Yield Strength (spread do par)', source: srcYSP },
+];
 export const BUILTINS = [
+  ...MY_DEFAULTS,
   { name: 'Spread de yield 10 anos do par (base − cotada)', source: `//@version=5
 indicator("Spread de yield", format=format.price, precision=3)
 mat = "10Y"
@@ -99,9 +110,15 @@ export class Scripts {
     this.core = core; this.ui = ui;
     this.active = store.get('scripts:active', null) ?? [];
     this.lib = store.get('scripts:lib', []);
-    this.results = {}; this.rendered = []; this.mainMarkers = null; this.runId = 0; this.cache = new Map();
+    this.results = {}; this.rendered = []; this.mainMarkers = null; this.runId = 0; this.cache = new Map(); this.missing = new Set();
+    if (!store.get('pinedefaults:v1', false)) {
+      for (const d of MY_DEFAULTS.filter(x => x.auto)) if (!this.active.some(a => a.name === d.name)) this.active.push({ id: uid(), name: d.name, source: d.source, inputs: {}, visible: true });
+      store.set('pinedefaults:v1', true); this.saveActive();
+    }
     core.on('beforeMainRemove', () => { this.mainMarkers?.detach?.(); this.mainMarkers = null; this.clearRendered(); });
     core.on('mainSeries', () => this.renderAll());
+    core.on('range', () => requestAnimationFrame(() => this.placeTables()));
+    window.addEventListener('resize', () => setTimeout(() => this.placeTables(), 80));
   }
   saveActive() { store.set('scripts:active', this.active.map(({ id, name, source, inputs, visible, styles, tfs }) => ({ id, name, source, inputs, visible, styles, tfs }))); }
   saveLib() { store.set('scripts:lib', this.lib); }
@@ -112,10 +129,22 @@ export class Scripts {
   setInputs(id, inputs) { const s = this.active.find(x => x.id === id); if (s) { s.inputs = inputs; this.saveActive(); this.runAll(); } }
   inputsMeta(source) { try { return new Indicator(source).getInputsMeta(); } catch { return []; } }
 
+  kl(b, sec) { return { openTime: b.time * 1000, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0, closeTime: (b.time + sec) * 1000 - 1 }; }
+  // dados para o motor nativo (indicadores prontos do app)
+  nativeApi() {
+    const kl = (b, sec) => this.kl(b, sec);
+    return {
+      get: async (sym, tf) => { try { return await this.fetchFor(sym, tf, undefined, undefined, kl); } catch { this.missing.add(String(sym).split(':').pop() || '?'); return []; } },
+      tfSec: tf => oanda.tfById(tfToId(tf)).sec, tfId: tf => oanda.tfById(tfToId(tf)).id,
+      short: t => oanda.short(oanda.resolveTicker(t)).replace(/[^A-Z0-9]/gi, '').toUpperCase(),
+      key: t => oanda.resolveTicker(t),
+    };
+  }
+
   // ---------- dados para o PineTS ----------
   provider() {
     const core = this.core;
-    const kl = (b, sec) => ({ openTime: b.time * 1000, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0, closeTime: (b.time + sec) * 1000 - 1 });
+    const kl = (b, sec) => this.kl(b, sec);
     return {
       configure() { },
       getSymbolInfo: async t => {
@@ -125,6 +154,16 @@ export class Scripts {
           mintick: Math.pow(10, -prec), pricescale: Math.pow(10, prec), minmove: 1, pointvalue: 1, timezone: 'America/New_York', session: '24x7', root: base, prefix: 'OANDA', main_tickerid: 'OANDA:' + oanda.short(name) };
       },
       getMarketData: async (ticker, tf, limit, sDate, eDate) => {
+        // ativo sem dados (ex.: yield que a CNBC não entregou) vira na, como no TradingView, sem derrubar o script inteiro
+        try { return await this.fetchFor(ticker, tf, sDate, eDate, kl); }
+        catch (e) { this.missing.add(String(ticker).split(':').pop() || '?'); return []; }
+      },
+    };
+  }
+  async fetchFor(ticker, tf, sDate, eDate, kl) {
+        const core = this.core;
+        if (!String(ticker || '').trim()) throw new Error('símbolo vazio');
+        {
         const inst = oanda.resolveTicker(ticker); const tfo = oanda.tfById(tfToId(tf));
         const cut = core.replayCutReal;
         if (inst === core.instrument && tfo.id === core.tf.id) {
@@ -152,8 +191,7 @@ export class Scripts {
         if (eDate) bars = bars.filter(b => b.time * 1000 <= eDate);
         if (sDate) bars = bars.filter(b => b.time * 1000 >= sDate);
         return bars.map(b => kl(b, tfo.sec));
-      },
-    };
+        }
   }
 
   // ---------- execução ----------
@@ -163,10 +201,15 @@ export class Scripts {
     for (const s of this.active) {
       if (my !== this.runId) return;
       try {
-        const ind = new Indicator(s.source, s.inputs || {});
-        const pine = new PineTS(prov, ticker, this.core.tf.id, view.length);
-        const ctx = await pine.run(ind);
-        this.results[s.id] = { ctx, error: null, len: view.length };
+        this.missing = new Set(); let ctx;
+        if (hasNative(s.source)) ctx = await runNative(s.source, s.inputs || {}, { api: this.nativeApi(), chart: view.map(b => this.kl(b, this.core.tf.sec)), chartTf: this.core.tf.id, ticker });
+        else {
+          const ind = new Indicator(s.source, s.inputs || {});
+          const pine = new PineTS(prov, ticker, this.core.tf.id, view.length);
+          ctx = await pine.run(ind);
+        }
+        const miss = [...this.missing];
+        this.results[s.id] = { ctx, error: null, warn: miss.length ? 'Sem dados: ' + miss.slice(0, 6).join(', ') + (miss.length > 6 ? '…' : '') : null, len: view.length };
       } catch (e) {
         this.results[s.id] = { ctx: null, error: (e && (e.message || String(e))).split('\n')[0].slice(0, 160) };
       }
@@ -187,7 +230,8 @@ export class Scripts {
 
   renderAll() {
     this.clearRendered();
-    const chart = this.core.chart; const mainMk = [];
+    const chart = this.core.chart; const mainMk = []; const barCols = new Map(); const tables = [];
+    const pr = priceRange(this.core.view());
     let pane = 1;
     for (const s of this.active) {
       const res = this.results[s.id]; if (!res || !res.ctx || !s.visible) continue;
@@ -212,10 +256,15 @@ export class Scripts {
         }
         if (style === 'background') { for (const d of data) if (!isNA(d.value) && d.options?.color) bands.push({ time: d.time / 1000, color: toRgba(d.options.color) }); continue; }
         if (style === 'fill') { fills.push({ a: p.options.plot1, b: p.options.plot2, colors: data.map(d => toRgba(d.options?.color ?? p.options.color)) }); continue; }
-        if (style === 'barcolor') continue;
+        if (style === 'barcolor') {
+          for (const d of data) { const c = d.options?.color ?? (d.value !== true && typeof d.value === 'string' ? d.value : null); if (!isNA(d.value) && d.value !== false && c) barCols.set(d.time / 1000, toRgba(c)); }
+          continue;
+        }
         const vals = data.map(d => d.value);
         const fin = vals.filter(v => typeof v === 'number' && isFinite(v));
         const constant = fin.length > 5 && fin.every(v => v === fin[0]);
+        // overlay com valores longe do preço (ex.: spread de yield): escala própria, para não achatar os candles
+        const ownScale = overlay && pr && fin.length > 5 && offPrice(fin, pr);
         const baseColor = ov.color || toRgba(p.options?.color, '#2962ff');
         const lw = ov.width || Math.max(1, Math.min(4, p.options?.linewidth || 1));
         const lsty = ov.style === 'dashed' ? LineStyle.Dashed : ov.style === 'dotted' ? LineStyle.Dotted : null;
@@ -229,16 +278,19 @@ export class Scripts {
         } else {
           const dots = style === 'style_circles' || style === 'style_cross';
           series = chart.addSeries(LineSeries, {
-            priceFormat: pf, color: baseColor, lineWidth: constant && !ov.width ? 1 : lw, lineStyle: lsty ?? (constant ? LineStyle.Dashed : LineStyle.Solid),
+            ...(ownScale ? { priceScaleId: 'own-' + s.id + '-' + title } : {}),
+            priceFormat: ownScale ? { type: 'price', precision: 3, minMove: 0.001 } : pf, color: baseColor, lineWidth: constant && !ov.width ? 1 : lw, lineStyle: lsty ?? (constant ? LineStyle.Dashed : LineStyle.Solid),
             lineType: style === 'style_stepline' ? LineType.WithSteps : LineType.Simple, lineVisible: !dots, pointMarkersVisible: dots, pointMarkersRadius: dots ? 2 : undefined,
-            lastValueVisible: !constant, priceLineVisible: false, crosshairMarkerVisible: !constant, crosshairMarkerRadius: 3,
+            lastValueVisible: !constant && !ownScale, priceLineVisible: false, crosshairMarkerVisible: !constant, crosshairMarkerRadius: 3,
           }, pIdx);
           rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: !ov.color && d.options && 'color' in d.options ? toRgba(d.options.color) : undefined });
         }
+        if (ownScale) { try { series.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } }); } catch { /* */ } }
         try { series.setData(rows); } catch { series.setData(dedupe(rows)); }
         r.series.push(series); r.byTitle[title] = { series, vals };
       }
       const draw = (k) => ctx.plots[k]?.data?.[0]?.value?.filter?.(o => !o._deleted) || [];
+      for (const t of draw('__tables__')) tables.push(t);
       const objs = { lines: draw('__lines__'), boxes: draw('__boxes__'), labels: draw('__labels__') };
       r.target = overlay ? this.core.main : r.series[0];
       if (r.target && (bands.length || fills.length || objs.lines.length || objs.boxes.length || objs.labels.length)) {
@@ -255,9 +307,42 @@ export class Scripts {
       panes[0].setStretchFactor(panes.length > 2 ? 2.2 : 3);
       for (let i = 1; i < panes.length; i++) panes[i].setStretchFactor(1);
     } catch { /* */ }
+    this.core.setBarColors(barCols);
+    this.renderTables(tables);
     this.mainMarkers?.detach?.();
     this.mainMarkers = mainMk.length ? createSeriesMarkers(this.core.main, mainMk.sort((a, b) => a.time - b.time)) : null;
     this.ui.onScriptsRendered?.();
+  }
+
+  // table.new / table.cell do Pine, desenhada por cima do gráfico (posição igual à do TradingView)
+  renderTables(tables) {
+    const host = this.core.el.parentElement; if (!host) return;
+    let box = host.querySelector(':scope > .ptables');
+    if (!tables.length) { box?.remove(); return; }
+    if (!box) { box = document.createElement('div'); box.className = 'ptables'; host.appendChild(box); }
+    this.placeTables(box);
+    const SZ = { tiny: 9, small: 10.5, normal: 12, large: 15, huge: 19, auto: 12 };
+    const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const col = (c, d) => { const v = toRgba(c, ''); return v || d; };
+    box.innerHTML = tables.map(t => {
+      const pos = String(t.position || 'top_right').replace('position.', '');
+      const rows = (t.cells || []).map(r => (r || []).filter(Boolean)).filter(r => r.some(c => c && String(c.text ?? '') !== ''));
+      const bw = t.border_width ? `${t.border_width}px solid ${col(t.border_color, 'rgba(120,123,134,.35)')}` : '0';
+      const html = rows.map(r => '<tr>' + r.map(c => {
+        if (c._merged) return '';
+        const bg = col(c.bgcolor, ''); let tc = col(c.text_color, 'var(--text)');
+        if (!bg && /^(#000000|#000|rgba\(0,0,0,1(\.0+)?\))$/i.test(tc)) tc = 'var(--text)'; // preto padrão do Pine sumiria no fundo preto
+        return `<td style="${bg ? 'background:' + bg + ';' : ''}color:${tc};font-size:${SZ[c.text_size] || 12}px;text-align:${String(c.text_halign || 'center').replace(/.*_/, '')};border:${bw}">${esc(c.text)}</td>`;
+      }).join('') + '</tr>').join('');
+      return `<table class="pt ${pos}" style="${t.bgcolor ? 'background:' + col(t.bgcolor, '') + ';' : ''}${t.frame_width ? `outline:${t.frame_width}px solid ${col(t.frame_color, 'transparent')};` : ''}">${html}</table>`;
+    }).join('');
+  }
+
+  placeTables(box = this.core.el.parentElement?.querySelector(':scope > .ptables')) {
+    if (!box) return;
+    const chart = this.core.chart; let rw = 60, th = 28, ph = null;
+    try { rw = chart.priceScale('right').width(); th = chart.timeScale().height(); ph = chart.panes()[0].getHeight(); } catch { /* */ }
+    box.style.right = rw + 'px'; box.style.bottom = (ph ? Math.max(0, this.core.el.clientHeight - ph) : th) + 'px';
   }
 
   // valores para a legenda no índice i
@@ -272,12 +357,23 @@ export class Scripts {
         const d = p.data?.[i ?? p.data.length - 1]; if (!d) continue;
         vals.push({ v: d.value, color: toRgba(d.options?.color ?? p.options?.color, '#2962ff') });
       }
-      out[s.id] = { title: res.ctx.indicator?.shorttitle || res.ctx.indicator?.title || s.name, vals, overlay: !!res.ctx.indicator?.overlay };
+      out[s.id] = { title: res.ctx.indicator?.shorttitle || res.ctx.indicator?.title || s.name, vals, overlay: !!res.ctx.indicator?.overlay, warn: res.warn };
     }
     return out;
   }
 }
 
+function priceRange(view) {
+  if (!view.length) return null; let lo = Infinity, hi = -Infinity;
+  for (const b of view) { if (b.low < lo) lo = b.low; if (b.high > hi) hi = b.high; }
+  return isFinite(lo) && isFinite(hi) ? { lo, hi } : null;
+}
+// a mediana da série cai bem fora da faixa de preço do gráfico?
+function offPrice(vals, { lo, hi }) {
+  const sorted = [...vals].sort((a, b) => a - b); const med = sorted[Math.floor(sorted.length / 2)];
+  const span = Math.max(hi - lo, Math.abs(hi) * 0.01);
+  return med < lo - span * 0.5 || med > hi + span * 0.5;
+}
 function dedupe(rows) { const m = new Map(); for (const r of rows) m.set(r.time, r); return [...m.values()].sort((a, b) => a.time - b.time); }
 
 // Primitive que desenha bgcolor, fill, line.new, box.new e label.new do Pine.

@@ -79,7 +79,8 @@ export class ChartCore {
   setTz(tz) { this.tz = tz; store.set('tz', tz); this.chart.applyOptions({ localization: { timeFormatter: ts => this.fmtTime(ts, true) } }); }
 
   view() { return this.viewLen ? this.bars.slice(0, this.viewLen) : this.bars; }
-  seriesData(bars) {
+  seriesData(bars) { return this.colorize(this.rawSeriesData(bars)); }
+  rawSeriesData(bars) {
     if (this.ctype === 'line' || this.ctype === 'area') return bars.map(b => ({ time: b.time, value: b.close }));
     if (this.ctype === 'heikin') {
       const out = []; let po, pc;
@@ -90,6 +91,17 @@ export class ChartCore {
       return out;
     }
     return bars.map(b => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }));
+  }
+  // barcolor() dos scripts: pinta o candle inteiro (corpo, borda e pavio)
+  colorize(rows) {
+    const m = this.barColors; if (!m || !m.size || this.ctype === 'line' || this.ctype === 'area') return rows;
+    const hollow = this.ctype === 'hollow';
+    return rows.map(r => { const c = m.get(r.time); if (!c) return r; return this.ctype === 'bars' ? { ...r, color: c } : { ...r, color: hollow && r.close >= r.open ? 'rgba(0,0,0,0)' : c, borderColor: c, wickColor: c }; });
+  }
+  setBarColors(map) {
+    const prev = this.barColors; this.barColors = map;
+    const same = (!prev || !prev.size) && !map.size || (prev && prev.size === map.size && [...map].every(([k, v]) => prev.get(k) === v));
+    if (!same && this.main && this.bars.length) this.main.setData(this.seriesData(this.view()));
   }
   dataPoint(bars, i) { return this.seriesData(this.ctype === 'heikin' ? bars.slice(0, i + 1) : [bars[i]]).at(-1); }
 

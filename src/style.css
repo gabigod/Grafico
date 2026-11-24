@@ -310,3 +310,11 @@ sup { font-size: .68em; vertical-align: top; line-height: 1; position: relative;
 .itabs button.on { color: var(--text); border-bottom-color: var(--text); }
 .strow { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .strow .inp { padding: 6px; }
+
+/* ---------- tabelas dos scripts (table.new) ---------- */
+.ptables { position: absolute; left: 0; top: 0; z-index: 4; pointer-events: none; }
+.ptables .pt { position: absolute; border-collapse: collapse; font-variant-numeric: tabular-nums; line-height: 1.25; margin: 6px; }
+.ptables .pt td { padding: 2px 7px; white-space: nowrap; }
+.ptables .top_left { top: 34px; left: 0; } .ptables .top_center { top: 34px; left: 50%; transform: translateX(-50%); } .ptables .top_right { top: 34px; right: 0; }
+.ptables .middle_left { top: 50%; left: 0; transform: translateY(-50%); } .ptables .middle_center { top: 50%; left: 50%; transform: translate(-50%, -50%); } .ptables .middle_right { top: 50%; right: 0; transform: translateY(-50%); }
+.ptables .bottom_left { bottom: 0; left: 0; } .ptables .bottom_center { bottom: 0; left: 50%; transform: translateX(-50%); } .ptables .bottom_right { bottom: 0; right: 0; }
