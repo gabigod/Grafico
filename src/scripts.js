@@ -230,19 +230,22 @@ export class Scripts {
     if (my === this.runId) this.renderAll();
   }
 
-  clearRendered() {
-    const chart = this.core.chart;
+  // keep=true: as linhas do painel do preço ficam guardadas para serem reaproveitadas (evita recriar tudo a cada atualização)
+  clearRendered(keep) {
+    const chart = this.core.chart; if (!keep) this.dropPool();
     for (const r of this.rendered) {
       try { r.prim && r.target.detachPrimitive(r.prim); } catch { /* */ }
       try { r.markers?.detach?.(); } catch { /* */ }
-      for (const s of r.series) { try { chart.removeSeries(s); } catch { /* */ } }
+      for (const s of r.series) { if (keep && s._pk) { this.pool.set(s._pk, s); continue; } try { chart.removeSeries(s); } catch { /* */ } }
     }
     this.rendered = [];
     try { while (chart.panes().length > 1) chart.removePane(chart.panes().length - 1); } catch { /* */ }
   }
 
+  dropPool() { for (const s of this.pool?.values() || []) { try { this.core.chart.removeSeries(s); } catch { /* */ } } this.pool = new Map(); }
   renderAll() {
-    this.clearRendered();
+    if (!this.pool) this.pool = new Map();
+    this.clearRendered(true);
     const chart = this.core.chart; const mainMk = []; const barCols = new Map(); const tables = [];
     const pr = priceRange(this.core.view());
     let pane = 1;
@@ -293,16 +296,27 @@ export class Scripts {
           rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value });
         } else {
           const dots = style === 'style_circles' || style === 'style_cross';
-          series = chart.addSeries(LineSeries, {
+          const opts = {
             ...(ownScale ? { priceScaleId: 'own-' + s.id } : {}),
             priceFormat: ownScale ? { type: 'price', precision: 3, minMove: 0.001 } : pf, color: baseColor, lineWidth: constant && !ov.width ? 1 : lw, lineStyle: lsty ?? (constant ? LineStyle.Dashed : LineStyle.Solid),
             lineType: style === 'style_stepline' ? LineType.WithSteps : LineType.Simple, lineVisible: !dots, pointMarkersVisible: dots, pointMarkersRadius: dots ? 2 : undefined,
             lastValueVisible: !constant && !ownScale, priceLineVisible: false, crosshairMarkerVisible: !constant, crosshairMarkerRadius: 3,
-          }, pIdx);
+          };
+          const pk = pIdx === 0 ? [s.id, title, ownScale ? 1 : 0].join('|') : null;
+          series = pk && this.pool.get(pk);
+          if (series) { this.pool.delete(pk); series.applyOptions(opts); } else { series = chart.addSeries(LineSeries, opts, pIdx); if (pk) series._pk = pk; }
           rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: !ov.color && d.options && 'color' in d.options ? remap(d.options.color) : undefined });
         }
         if (ownScale) { try { series.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } }); } catch { /* */ } }
-        try { series.setData(rows); } catch { series.setData(dedupe(rows)); }
+        // só reenvia os dados se mudaram (as atualizações ao vivo normalmente só mexem na última barra)
+        const sig = rows.length + '|' + JSON.stringify(rows.slice(-3)) + '|' + JSON.stringify(rows[0]) + '|' + JSON.stringify(rows[Math.floor(rows.length / 2)]);
+        if (series._sig !== sig) {
+          const prev = series._rows; const n = rows.length;
+          if (prev && prev.length === n && n > 2 && prev[0].time === rows[0].time && JSON.stringify(prev[n - 3]) === JSON.stringify(rows[n - 3]) && JSON.stringify(prev[Math.floor(n / 2)]) === JSON.stringify(rows[Math.floor(n / 2)])) {
+            try { series.update(rows[n - 2]); series.update(rows[n - 1]); } catch { series.setData(rows); }
+          } else { try { series.setData(rows); } catch { series.setData(dedupe(rows)); } }
+          series._sig = sig; series._rows = rows;
+        }
         r.series.push(series); r.byTitle[title] = { series, vals };
       }
       const draw = (k) => ctx.plots[k]?.data?.[0]?.value?.filter?.(o => !o._deleted) || [];
@@ -318,6 +332,7 @@ export class Scripts {
       }
       this.rendered.push(r);
     }
+    this.dropPool();
     try {
       const panes = chart.panes();
       panes[0].setStretchFactor(panes.length > 2 ? 2.2 : 3);

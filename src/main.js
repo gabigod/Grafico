@@ -113,7 +113,7 @@ function scheduleScripts(delay = 120) { clearTimeout(scriptTimer); scriptTimer =
 core.on('data', () => { scheduleScripts(80); updateCd(); });
 core.on('newBar', () => scheduleScripts(10));
 let lastTickRun = 0;
-core.on('tick', () => { lastTickAt = Date.now(); updateLegend(); updateCd(); if (rt.pos) updateTradePanel(); const now = Date.now(); if (now - lastTickRun > 5000) { lastTickRun = now; scheduleScripts(300); } });
+core.on('tick', () => { lastTickAt = Date.now(); updateLegend(); updateCd(); if (rt.pos) updateTradePanel(); const now = Date.now(); if (now - lastTickRun > 20000) { lastTickRun = now; scheduleScripts(300); } });
 core.on('range', () => updateCd());
 core.on('error', e => ui.toast(e.message));
 let liveErrShown = 0;
@@ -147,15 +147,15 @@ function schedulePrefetch(gen) {
     for (const w of state.watch) { const n = oanda.resolveTicker(w); if (n !== state.instrument) jobs.push([n, state.tf]); }
     for (const t of tfs) if (t !== state.tf) jobs.push([state.instrument, t]);
     for (const t of ['D', '240']) for (const w of state.watch) { const n = oanda.resolveTicker(w); if (n !== state.instrument && t !== state.tf) jobs.push([n, t]); }
-    for (const [inst, t] of jobs.slice(0, 40)) {
+    for (const [inst, t] of jobs.slice(0, 24)) {
       if (gen !== loadGen || document.hidden || replay.active) return;
       const tfo = oanda.tfById(t); const key = `${oanda.feedName()}|${inst}|${tfo.gran}`;
       if (memFresh(key, 5 * 60e3)) continue;
       try { const rec = await getBars(key); const bars = await ChartCore.fetchFresh(inst, tfo, rec?.bars); putBars(key, { at: Date.now(), bars }); }
       catch { /* sem conexão: tenta depois */ }
-      await new Promise(r => setTimeout(r, 120));
+      await new Promise(r => setTimeout(r, 600));
     }
-  }, 1500);
+  }, 4000);
 }
 
 // ---------------- legenda ----------------

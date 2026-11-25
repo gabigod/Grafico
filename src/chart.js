@@ -20,7 +20,7 @@ export class ChartCore {
     const t = THEMES[this.theme];
     this.chart = createChart(el, {
       autoSize: true,
-      layout: { background: { type: 'solid', color: t.bg }, textColor: t.text, fontSize: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif", attributionLogo: true, panes: { separatorColor: t.border, separatorHoverColor: 'rgba(41,98,255,0.3)', enableResize: true } },
+      layout: { attributionLogo: false, background: { type: 'solid', color: t.bg }, textColor: t.text, fontSize: 12, fontFamily: "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif", panes: { separatorColor: t.border, separatorHoverColor: 'rgba(41,98,255,0.3)', enableResize: true } },
       grid: { vertLines: { visible: false }, horzLines: { visible: false } },
       crosshair: { mode: CrosshairMode.Normal, vertLine: { color: t.cross, width: 1, labelBackgroundColor: t.crossLabel, style: LineStyle.Dashed }, horzLine: { color: t.cross, width: 1, labelBackgroundColor: t.crossLabel, style: LineStyle.Dashed } },
       rightPriceScale: { borderColor: t.border, scaleMargins: { top: 0.12, bottom: 0.08 } },
