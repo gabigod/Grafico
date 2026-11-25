@@ -91,10 +91,10 @@ class Env {
 // ---------- saída no formato do PineTS (ctx.plots) ----------
 class Out {
   constructor(chart, title) { this.t = chart.map(b => b.openTime); this.plots = {}; this.n = 0; this.title = title; }
-  line(title, vals, color, lw = 1) {
+  line(title, vals, color, lw = 1, own) {
     const key = title || '#' + this.n; this.n++;
     const col = typeof color === 'function' ? color : () => color;
-    this.plots[key] = { options: { color: col(this.t.length - 1), linewidth: lw, overlay: true }, data: this.t.map((time, i) => ({ time, value: na(vals[i]) ? NaN : vals[i], options: { color: col(i) } })) };
+    this.plots[key] = { options: { color: col(this.t.length - 1), linewidth: lw, overlay: true, ...(own ? { ownScale: true } : {}) }, data: this.t.map((time, i) => ({ time, value: na(vals[i]) ? NaN : vals[i], options: { color: col(i) } })) };
   }
   shape(title, cond, { location, shape, color, size }) {
     this.n++;
@@ -197,7 +197,7 @@ async function runYSA(env, I) {
   const ema1 = onCtx(e1c), ema2 = onCtx(e2c), barsUp = onCtx(U), barsDown = onCtx(D);
   const cu = barsUp.map(v => v >= I.minBars), cd = barsDown.map(v => v >= I.minBars);
   const cur = i => cu[i] ? C.lime : cd[i] ? C.red : C.gray;
-  out.line('Agregado', spread, C.gray); out.line('EMA Curta', ema1, cur, 2); out.line('EMA Longa', ema2, cur, 2);
+  out.line('Agregado', spread, C.gray, 1, true); out.line('EMA Curta', ema1, cur, 2, true); out.line('EMA Longa', ema2, cur, 2, true);
   out.shape('Confirmado Alta', barsUp.map(v => v === I.minBars), { location: 'BelowBar', shape: 'shape_triangle_up', color: C.lime, size: 'small' });
   out.shape('Confirmado Baixa', barsDown.map(v => v === I.minBars), { location: 'AboveBar', shape: 'shape_triangle_down', color: C.red, size: 'small' });
   out.barcolor('Cor do Candle', ch.map((_, i) => cu[i] ? C.lime : cd[i] ? C.red : null));
@@ -215,7 +215,7 @@ async function runYSP(env, I) {
   const sC = pickY(yC, base).map((v, i) => v - pickY(yC, quote)[i]);
   const ema1 = onCtx(ema(sC, I.ema_fast)), ema2 = onCtx(ema(sC, I.ema_slow));
   const cur = i => ema1[i] > ema2[i] ? C.lime : ema1[i] < ema2[i] ? C.red : C.gray;
-  out.line('Spread', spread, C.gray); out.line('EMA Curta', ema1, cur, 2); out.line('EMA Longa', ema2, cur, 2);
+  out.line('Spread', spread, C.gray, 1, true); out.line('EMA Curta', ema1, cur, 2, true); out.line('EMA Longa', ema2, cur, 2, true);
   return out.ctx();
 }
 

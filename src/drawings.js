@@ -320,9 +320,15 @@ export class Drawings {
         ctx.strokeStyle = '#787b86'; ctx.lineWidth = 1; line({ x: x1, y: e.y }, { x: x1 + w, y: e.y });
         const ep = it.pts[0].p, sp = it.pts[1].p, tp = it.pts[2].p; const risk = Math.abs(ep - sp), rew = Math.abs(tp - ep);
         const rr = risk ? (rew / risk).toFixed(2) : '–'; const xm = x1 + w / 2;
-        this.label(ctx, `Alvo ${this.fmt(tp)} · ${this.pips(rew).toFixed(1)} pips · ${(rew / ep * 100).toFixed(2)}%`, xm, g.y + (g.y < e.y ? -12 : 12), '#089981');
-        this.label(ctx, `Stop ${this.fmt(sp)} · ${this.pips(risk).toFixed(1)} pips`, xm, s.y + (s.y < e.y ? -12 : 12), '#f23645');
-        this.label(ctx, `${it.type === 'long' ? 'Compra' : 'Venda'} ${this.fmt(ep)} · R:R ${rr}`, xm, e.y, '#363a45'); break;
+        // dados só com a posição selecionada (igual ao TradingView); sem toque, só as áreas verde e vermelha
+        if (this.sel === it) {
+          const pct = d => (d / ep * 100).toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
+          const live = this.core.view().at(-1)?.close; const pl = live !== undefined ? (it.type === 'long' ? live - ep : ep - live) : null;
+          this.label(ctx, `Objetivo: ${this.fmt(rew)} (${pct(rew)}%) ${this.pips(rew).toFixed(1)}`, xm, g.y + (g.y < e.y ? -14 : 14), '#089981');
+          this.label(ctx, `Stop: ${this.fmt(risk)} (${pct(risk)}%) ${this.pips(risk).toFixed(1)}`, xm, s.y + (s.y < e.y ? -14 : 14), '#f23645');
+          this.label(ctx, `${pl !== null ? `Aberto L&P: ${pl >= 0 ? '' : '-'}${this.fmt(Math.abs(pl))} · ` : ''}Risco/retorno: ${rr}`, xm, e.y, pl !== null && pl < 0 ? '#f23645' : '#089981');
+        }
+        break;
       }
       case 'measure': {
         const up = it.pts[1].p >= it.pts[0].p; const c = up ? '#2962ff' : '#f23645';

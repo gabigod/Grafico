@@ -1,7 +1,7 @@
 import './style.css';
 import { ChartCore } from './chart.js';
 import { Drawings, TOOLS, PALETTE } from './drawings.js';
-import { Scripts, BUILTINS } from './scripts.js';
+import { Scripts, BUILTINS, hex6 } from './scripts.js';
 import { Replay } from './replay.js';
 import * as oanda from './oanda.js';
 import { ct, ctCfg } from './ctrader.js';
@@ -194,7 +194,6 @@ function updateLegend() {
     html += `<div class="ind ${s.visible ? '' : 'off'}" data-id="${s.id}"><span class="nm">${esc(nm)}</span>`;
     if (r?.error) html += `<span class="err">erro: ${esc(r.error)}</span>`;
     else if (!r) html += `<span class="k">…</span>`;
-    else html += r.vals.slice(0, 5).map(x => `<span class="v" style="color:${x.color}">${fmtVal(x.v, r.overlay ? prec : undefined)}</span>`).join('');
     if (r?.warn) html += `<span class="err">${esc(r.warn)}</span>`;
     html += `<button class="eyeb" data-a="eye" title="Mostrar/ocultar">${s.visible ? ICON.eye : ICON.eyeOff}</button><span class="acts"><button data-a="eye" title="Mostrar/ocultar">${ICON.eye}</button><button data-a="set" title="Configurar">${ICON.gear}</button><button data-a="code" title="Código">${ICON.code}</button><button data-a="del" title="Remover">${ICON.trash}</button></span></div>`;
   }
@@ -234,9 +233,14 @@ function renderTools() {
 }
 function pickTool(g, id) { const last = store.get('toolLast', {}); last[g] = id; store.set('toolLast', last); drawings.setTool(id); }
 function toggleTool(id) { drawings.setTool(drawings.tool === id ? 'cursor' : id); }
+// favoritos: só as ferramentas com estrela ficam por cima do gráfico (e só com "Mostrar favoritos no gráfico" ligado)
+const favTools = () => store.get('favTools', FAV).filter(id => toolDef(id));
+const DCATS = [['trend', 'Ferramentas de tendência', ['trend', 'ray', 'extended', 'hline', 'hray', 'vline', 'cross', 'arrow', 'channel']], ['fibo', 'Fibonacci', ['fib']],
+  ['prev', 'Previsão e medição', ['long', 'short', 'prange', 'drange', 'measure']], ['shapes', 'Formas geométricas', ['rect', 'ellipse']], ['notes', 'Anotações', ['text', 'plabel']], ['other', 'Outros', ['eraser']]];
 function renderFav() {
-  const el = $('#favbar'); if (!el) return;
-  el.innerHTML = `<span class="grip" id="fav-grip">${ICON.grip}</span>` + FAV.map(id => `<button data-tool="${id}" class="${drawings.tool === id ? 'on' : ''}" title="${esc(toolDef(id).name)}">${toolSvg(id)}</button>`).join('');
+  const el = $('#favbar'); if (!el) return; const favs = favTools();
+  el.hidden = !store.get('showFav', true) || !favs.length; if (el.hidden) return;
+  el.innerHTML = `<span class="grip" id="fav-grip">${ICON.grip}</span>` + favs.map(id => `<button data-tool="${id}" class="${drawings.tool === id ? 'on' : ''}" title="${esc(toolDef(id).name)}">${toolSvg(id)}</button>`).join('');
   makeDraggable(el, $('#fav-grip'), 'favPos');
 }
 function renderDrawPop(it) {
@@ -340,15 +344,52 @@ function openGoto() {
 }
 
 // ---------------- celular em pé ----------------
+// roda de ativo e timeframe (igual ao TradingView): ativos da lista atual, timeframes favoritos; deslize para cima/baixo
+const wheelSyms = () => { const a = [...new Set(state.watch.map(oanda.resolveTicker))]; if (!a.includes(state.instrument)) a.unshift(state.instrument); return a; };
+const wheelTfs = () => { let a = state.favTfs.length >= 2 ? [...state.favTfs] : oanda.TFS.map(t => t.id); a = a.filter(t => oanda.TFS.some(x => x.id === t)).sort((x, y) => oanda.tfById(x).sec - oanda.tfById(y).sec); if (!a.includes(state.tf)) a.push(state.tf); return a; };
+const wheelLabel = (kind, v) => kind === 'sym' ? oanda.short(v) : oanda.tfById(v).label;
 function renderMBot() {
   const el = $('#mbot'); if (!el) return;
-  const cur = state.recent[0] || { i: state.instrument, tf: state.tf };
-  const p = state.recent[2], n = state.recent[1];
-  const row = (r, c) => r ? `<button class="it ${c}" data-act="recent" data-i="${r.i}" data-tf="${r.tf}">${esc(oanda.short(r.i))}<span>${esc(oanda.tfById(r.tf).label)}</span></button>` : '';
-  el.innerHTML = `<div class="mrec">${row(p, 'p')}<div class="it cur"><span data-act="symbol">${esc(oanda.short(cur.i))}</span><span class="tfb" data-act="tf">${esc(oanda.tfById(cur.tf).label)}</span></div>${row(n, 'n')}</div>
+  const col = (kind, arr, cur) => { const i = arr.indexOf(cur), n = arr.length; const at = k => arr[((i + k) % n + n) % n];
+    return `<div class="wcol ${kind}" data-wheel="${kind}">${n > 1 ? `<span class="p">${esc(wheelLabel(kind, at(-1)))}</span>` : '<span class="p"></span>'}<span class="c">${esc(wheelLabel(kind, cur))}</span>${n > 1 ? `<span class="n">${esc(wheelLabel(kind, at(1)))}</span>` : '<span class="n"></span>'}</div>`; };
+  el.innerHTML = `<div class="mrec">${col('sym', wheelSyms(), state.instrument)}${col('tf', wheelTfs(), state.tf)}</div>
     <div class="mtools"><button class="${drawings.tool !== 'cursor' ? 'on' : ''}" data-act="mdraw" title="Desenhar">${ICON.pencil}</button>
     <button data-act="ind" title="Indicadores">${ICON.fx}</button><button data-act="mmore" title="Mais">${ICON.dots}</button><span class="sep"></span>
     <button class="${drawings.canUndo() ? '' : 'dis'}" data-act="undo">${ICON.undo}</button><button class="${drawings.canRedo() ? '' : 'dis'}" data-act="redo">${ICON.redo}</button></div>`;
+}
+function bindWheel() {
+  const H = 46; let g = null;
+  const wheelEl = () => { let w = $('#wheel'); if (!w) { w = document.createElement('div'); w.id = 'wheel'; w.className = 'wheel'; document.body.appendChild(w); } return w; };
+  const paint = () => {
+    const w = g.el; const off = g.dy / H; const center = g.i - off; const span = 5;
+    let html = ''; for (let k = Math.floor(center) - span; k <= Math.ceil(center) + span; k++) {
+      const v = g.arr[((k % g.n) + g.n) % g.n]; const d = k - center; const a = Math.max(0, 1 - Math.abs(d) / 4.5);
+      html += `<div class="wi ${Math.round(center) === k ? 'on' : ''}" style="transform:translateY(${d * H}px);opacity:${a.toFixed(2)}">${esc(wheelLabel(g.kind, v))}</div>`;
+    }
+    w.innerHTML = html;
+  };
+  $('#mbot').addEventListener('pointerdown', e => {
+    const c = e.target.closest('[data-wheel]'); if (!c) return;
+    const kind = c.dataset.wheel; const arr = kind === 'sym' ? wheelSyms() : wheelTfs(); const cur = kind === 'sym' ? state.instrument : state.tf;
+    g = { kind, arr, n: arr.length, i: Math.max(0, arr.indexOf(cur)), y: e.clientY, dy: 0, drag: false, col: c, el: null, id: e.pointerId };
+    try { c.setPointerCapture(e.pointerId); } catch { /* */ }
+  });
+  $('#mbot').addEventListener('pointermove', e => {
+    if (!g || e.pointerId !== g.id) return; g.dy = e.clientY - g.y;
+    if (!g.drag && Math.abs(g.dy) > 8 && g.n > 1) {
+      g.drag = true; g.el = wheelEl(); const r = g.col.querySelector('.c').getBoundingClientRect();
+      g.el.style.left = (r.left - 14) + 'px'; g.el.style.top = (r.top + r.height / 2) + 'px'; g.el.classList.toggle('tf', g.kind === 'tf'); g.el.hidden = false; g.col.classList.add('drag');
+    }
+    if (g.drag) { e.preventDefault(); paint(); }
+  });
+  const end = e => {
+    if (!g || e.pointerId !== g.id) return; const st = g; g = null;
+    if (st.el) st.el.hidden = true; st.col.classList.remove('drag');
+    if (!st.drag) { if (e.type === 'pointerup') (st.kind === 'sym' ? ACT.symbol : ACT.tf)?.(st.col); return; }
+    const k = Math.round(st.i - st.dy / H); const v = st.arr[((k % st.n) + st.n) % st.n];
+    if (st.kind === 'sym' && v !== state.instrument) loadSymbol(v); else if (st.kind === 'tf' && v !== state.tf) loadSymbol(state.instrument, v);
+  };
+  $('#mbot').addEventListener('pointerup', end); $('#mbot').addEventListener('pointercancel', end);
 }
 function renderMTabs() {
   const el = $('#mtabs'); if (!el) return; const tab = $('#app').dataset.tab;
@@ -360,14 +401,32 @@ function setTab(t) {
   if (t === 'watch') { renderWatch(); pollWatch(); } else setTimeout(() => core.chart.timeScale().applyOptions({}), 0);
 }
 function openMDraw() {
-  const sh = openModal(head('Ferramentas de desenho') + `<div class="sh-body"><div class="tgrid">${TOOLS.filter(t => !t.sep).map(t => `<button data-tool="${t.id}" class="${drawings.tool === t.id ? 'on' : ''}"><svg viewBox="0 0 24 24">${t.icon}</svg>${esc(t.name)}</button>`).join('')}</div>
-    <div class="sec-t">Ajustes</div>
-    <div class="mrow" data-m="magnetc">${ICON.magnet}<span>Ímã</span><span class="r">${{ off: 'desligado', weak: 'fraco', strong: 'forte' }[drawings.magnetMode]}</span></div>
-    <div class="mrow" data-m="keep">${ICON.pencil}<span>Continuar desenhando</span><span class="r">${drawings.keep ? 'ligado' : 'desligado'}</span></div>
-    <div class="mrow" data-m="lockall">${ICON.lock}<span>Travar todos os desenhos</span><span class="r">${drawings.lockAll ? 'sim' : 'não'}</span></div>
-    <div class="mrow" data-m="hide">${ICON.eyeOff}<span>Ocultar desenhos</span><span class="r">${drawings.hidden ? 'sim' : 'não'}</span></div>
-    <div class="mrow" data-m="clear">${ICON.trash}<span>Apagar todos os desenhos</span></div></div>`);
+  let tab = store.get('drawTab', 'fav'), q = '';
+  const card = id => { const t = toolDef(id); const f = favTools().includes(id); return `<button class="dcard ${drawings.tool === id ? 'on' : ''}" data-tool="${id}"><svg viewBox="0 0 24 24">${t.icon}</svg><span>${esc(t.name)}</span><i class="star ${f ? 'on' : ''}" data-star="${id}">${f ? ICON.starF : ICON.star}</i></button>`; };
+  const sec = (title, ids) => ids.length ? `<div class="dsec">${esc(title)}</div><div class="dgrid">${ids.map(card).join('')}</div>` : '';
+  const body = () => {
+    if (q) { const ids = TOOLS.filter(t => !t.sep && t.id !== 'cursor' && t.name.toLowerCase().includes(q)).map(t => t.id); return sec('Resultados', ids) || '<p class="hint">Nenhuma ferramenta encontrada.</p>'; }
+    if (tab === 'fav') { const f = favTools(); return f.length ? DCATS.map(([, n, ids]) => sec(n, ids.filter(i => f.includes(i)))).join('') : '<p class="hint">Toque na estrela de uma ferramenta para ela ficar nos favoritos e aparecer por cima do gráfico.</p>'; }
+    if (tab === 'all') return DCATS.map(([, n, ids]) => sec(n, ids)).join('');
+    if (tab === 'adj') return `<div class="mrow" data-m="magnetc">${ICON.magnet}<span>Ímã</span><span class="r">${{ off: 'desligado', weak: 'fraco', strong: 'forte' }[drawings.magnetMode]}</span></div>
+      <div class="mrow" data-m="keep">${ICON.pencil}<span>Continuar desenhando</span><span class="r">${drawings.keep ? 'ligado' : 'desligado'}</span></div>
+      <div class="mrow" data-m="lockall">${ICON.lock}<span>Travar todos os desenhos</span><span class="r">${drawings.lockAll ? 'sim' : 'não'}</span></div>
+      <div class="mrow" data-m="hide">${ICON.eyeOff}<span>Ocultar desenhos</span><span class="r">${drawings.hidden ? 'sim' : 'não'}</span></div>
+      <div class="mrow" data-m="clear">${ICON.trash}<span>Apagar todos os desenhos</span></div>`;
+    const c = DCATS.find(x => x[0] === tab); return c ? sec(c[1], c[2]) : '';
+  };
+  const tabs = [['fav', 'Favoritos'], ['all', 'Ferramentas'], ...DCATS.map(([k, n]) => [k, n]), ['adj', 'Ajustes']];
+  const sh = openModal(`<div class="dhead"><i class="handle"></i><h2>Desenhos</h2><label class="dsearch">${ICON.search}<input id="dq" placeholder="Pesquisar" autocomplete="off"></label>
+    <div class="dtabs">${tabs.map(([k, n]) => `<button data-dt="${k}" class="${k === tab ? 'on' : ''}">${n}</button>`).join('')}</div></div>
+    <div class="sh-body dbody" id="dbody">${body()}</div>
+    <label class="dfoot"><span>${ICON.pencil}</span><b>Mostrar favoritos no gráfico</b><input type="checkbox" id="dshow" ${store.get('showFav', true) ? 'checked' : ''}><i class="sw"></i></label>`);
+  sh.classList.add('dsheet');
+  const redraw = () => { sh.querySelector('#dbody').innerHTML = body(); sh.querySelectorAll('[data-dt]').forEach(b => b.classList.toggle('on', b.dataset.dt === tab && !q)); };
+  sh.querySelector('#dq').oninput = e => { q = e.target.value.trim().toLowerCase(); redraw(); };
+  sh.querySelector('#dshow').onchange = e => { store.set('showFav', e.target.checked); renderFav(); };
   sh.onclick = e => {
+    const dt = e.target.closest('[data-dt]'); if (dt) { tab = dt.dataset.dt; store.set('drawTab', tab); q = ''; sh.querySelector('#dq').value = ''; redraw(); dt.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' }); return; }
+    const st = e.target.closest('[data-star]'); if (st) { const id = st.dataset.star; const f = favTools(); store.set('favTools', f.includes(id) ? f.filter(x => x !== id) : [...f, id]); redraw(); renderFav(); return; }
     const t = e.target.closest('[data-tool]'); if (t) { closeModal(); drawings.setTool(t.dataset.tool === drawings.tool ? 'cursor' : t.dataset.tool); if (drawings.tool !== 'cursor') ui.toast('Toque no gráfico para desenhar'); return; }
     const m = e.target.closest('[data-m]')?.dataset.m; if (!m) return; closeModal();
     if (m === 'magnetc') { const o = ['off', 'weak', 'strong']; drawings.setMagnet(o[(o.indexOf(drawings.magnetMode) + 1) % 3]); ui.toast('Ímã: ' + { off: 'desligado', weak: 'fraco', strong: 'forte' }[drawings.magnetMode]); renderTools(); return; }
@@ -530,7 +589,75 @@ function openCtype(anchor) {
 
 // ---------------- lista de ativos (watchlist) ----------------
 function fmtSup(n, prec) { const s = Number(n).toFixed(prec); return prec >= 2 ? `${s.slice(0, -1)}<sup>${s.slice(-1)}</sup>` : s; }
-function toggleWatch(n) { state.watch = state.watch.includes(n) ? state.watch.filter(x => x !== n) : [...state.watch, n]; store.set('watch', state.watch); renderWatch(); }
+// ---- várias listas (como no TradingView): cada uma com seções ("###NOME") e ativos ----
+const MAJ = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDCHF', 'USDJPY'];
+function defaultLists() {
+  const items = []; const by = {};
+  state.watch.forEach(raw => { const n = oanda.resolveTicker(raw); const info = oanda.instInfo(n); let c = oanda.category({ name: n, type: info.type });
+    if (c === 'Forex') c = MAJ.includes(oanda.short(n).replace(/[^A-Z]/gi, '').toUpperCase()) ? 'Forex Major' : 'Forex Cross'; (by[c] ||= []).push(n); });
+  const order = ['Forex Major', 'Forex Cross', ...CAT_ORDER.filter(c => c !== 'Forex')];
+  [...order.filter(c => by[c]), ...Object.keys(by).filter(c => !order.includes(c))].forEach(c => items.push('###' + c, ...by[c]));
+  return [{ id: 'l1', name: 'Lista', items }];
+}
+state.lists = store.get('wlists', null) || defaultLists();
+state.listId = store.get('wlistId', state.lists[0].id);
+const curList = () => state.lists.find(l => l.id === state.listId) || state.lists[0];
+function saveLists() {
+  if (!state.lists.length) state.lists = [{ id: 'l' + Date.now(), name: 'Lista', items: [] }];
+  if (!state.lists.some(l => l.id === state.listId)) state.listId = state.lists[0].id;
+  store.set('wlists', state.lists); store.set('wlistId', state.listId);
+  state.watch = curList().items.filter(x => !x.startsWith('###')); store.set('watch', state.watch);
+  renderWatch(); renderMBot(); pollWatch();
+}
+state.watch = curList().items.filter(x => !x.startsWith('###'));
+function toggleWatch(n) { const l = curList(); l.items = l.items.includes(n) ? l.items.filter(x => x !== n) : [...l.items, n]; saveLists(); }
+function askText(title, value = '', ok = 'Salvar') {
+  return new Promise(res => {
+    const sh = openModal(head(esc(title)) + `<div class="sh-body"><input class="search" id="ask" value="${esc(value)}" autocomplete="off"><div class="btns"><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="ask-ok">${esc(ok)}</button></div></div>`);
+    const inp = sh.querySelector('#ask'); const done = v => { closeModal(); res(v); };
+    sh.querySelectorAll('[data-close]').forEach(b => b.onclick = () => done(null));
+    sh.querySelector('#ask-ok').onclick = () => done(inp.value.trim() || null); inp.onkeydown = e => { if (e.key === 'Enter') done(inp.value.trim() || null); };
+    setTimeout(() => { inp.focus(); inp.select(); }, 60);
+  });
+}
+function sheetMenu(title, rows) {
+  const sh = openModal(head(esc(title)) + `<div class="sh-body">${rows.map((r, i) => r.sep ? `<div class="sec-t">${esc(r.sep)}</div>` : `<div class="mrow ${r.danger ? 'bad' : ''}" data-i="${i}">${r.icon || ''}<span>${esc(r.label)}</span><span class="r">${r.right || ''}</span></div>`).join('')}</div>`);
+  sh.onclick = e => { const i = e.target.closest('[data-i]')?.dataset.i; if (i === undefined) return; closeModal(); rows[+i].onClick?.(); };
+}
+function openListMenu() {
+  const l = curList();
+  sheetMenu('Listas', [
+    ...state.lists.map(x => ({ label: x.name, icon: ICON.bookmark, right: x.id === l.id ? '✓' : String(x.items.filter(i => !i.startsWith('###')).length), onClick: () => { state.listId = x.id; saveLists(); } })),
+    { sep: 'Esta lista' },
+    { label: 'Adicionar ativo', icon: ICON.plus, onClick: () => openSymbol() },
+    { label: 'Adicionar seção', icon: ICON.plus, onClick: async () => { const n = await askText('Nova seção', '', 'Adicionar'); if (n) { l.items.push('###' + n); saveLists(); } } },
+    { label: 'Renomear lista', icon: ICON.edit, onClick: async () => { const n = await askText('Renomear lista', l.name); if (n) { l.name = n; saveLists(); } } },
+    { label: 'Copiar lista', icon: ICON.plus, onClick: async () => { const n = await askText('Nome da cópia', l.name + ' (cópia)', 'Criar'); if (n) { const c = { id: 'l' + Date.now(), name: n, items: [...l.items] }; state.lists.push(c); state.listId = c.id; saveLists(); } } },
+    { label: 'Apagar lista', icon: ICON.trash, danger: true, onClick: () => { if (confirm(`Apagar a lista "${l.name}"?`)) { state.lists = state.lists.filter(x => x !== l); saveLists(); } } },
+    { sep: '' },
+    { label: 'Criar nova lista', icon: ICON.plus, onClick: async () => { const n = await askText('Nova lista', '', 'Criar'); if (n) { const c = { id: 'l' + Date.now(), name: n, items: [] }; state.lists.push(c); state.listId = c.id; saveLists(); } } },
+  ]);
+}
+function moveItem(item, dir) { const it = curList().items; const i = it.indexOf(item); const j = i + dir; if (i < 0 || j < 0 || j >= it.length) return; [it[i], it[j]] = [it[j], it[i]]; saveLists(); }
+function openRowMenu(n) {
+  const l = curList(); const secs = l.items.filter(x => x.startsWith('###'));
+  sheetMenu(oanda.short(n), [
+    { label: 'Mover para cima', icon: ICON.chevU, onClick: () => moveItem(n, -1) },
+    { label: 'Mover para baixo', icon: ICON.chevD, onClick: () => moveItem(n, 1) },
+    ...secs.map(sec => ({ label: 'Mover para ' + sec.slice(3), icon: ICON.chevD, onClick: () => { l.items = l.items.filter(x => x !== n); l.items.splice(l.items.indexOf(sec) + 1, 0, n); saveLists(); } })),
+    ...state.lists.filter(x => x !== l).map(x => ({ label: 'Copiar para ' + x.name, icon: ICON.plus, onClick: () => { if (!x.items.includes(n)) x.items.push(n); saveLists(); ui.toast('Adicionado em ' + x.name); } })),
+    { label: 'Remover da lista', icon: ICON.trash, danger: true, onClick: () => toggleWatch(n) },
+  ]);
+}
+function openSecMenu(sec) {
+  const l = curList();
+  sheetMenu(sec.slice(3), [
+    { label: 'Renomear seção', icon: ICON.edit, onClick: async () => { const n = await askText('Renomear seção', sec.slice(3)); if (n) { l.items[l.items.indexOf(sec)] = '###' + n; saveLists(); } } },
+    { label: 'Mover para cima', icon: ICON.chevU, onClick: () => moveItem(sec, -1) },
+    { label: 'Mover para baixo', icon: ICON.chevD, onClick: () => moveItem(sec, 1) },
+    { label: 'Remover seção (mantém os ativos)', icon: ICON.trash, danger: true, onClick: () => { l.items = l.items.filter(x => x !== sec); saveLists(); } },
+  ]);
+}
 function toggleWatchPanel() {
   const w = $('#watch'); w.hidden = !w.hidden; store.set('watchOpen', !w.hidden); renderWatch(); renderRbar();
   if (!w.hidden) pollWatch(); setTimeout(() => core.chart.timeScale().applyOptions({}), 0);
@@ -538,9 +665,11 @@ function toggleWatchPanel() {
 const watchVisible = () => isMob() ? $('#app').dataset.tab === 'watch' : !$('#watch').hidden;
 function renderWatch() {
   const w = $('#watch'); if (!w || (!isMob() && w.hidden)) return;
-  const shut = store.get('wshut', {}); const groups = {};
-  state.watch.forEach(raw => { const n = oanda.resolveTicker(raw); const info = oanda.instInfo(n); const cat = oanda.category({ name: n, type: info.type }); (groups[cat] ||= []).push(n); });
-  const cats = [...CAT_ORDER.filter(c => groups[c]), ...Object.keys(groups).filter(c => !CAT_ORDER.includes(c))];
+  const shut = store.get('wshut', {}); const L = curList();
+  // seções da lista ("###NOME"); ativos antes da primeira seção ficam sem cabeçalho
+  const groups = []; let g = { name: null, items: [] };
+  for (const x of L.items) { if (x.startsWith('###')) { groups.push(g); g = { name: x, items: [] }; } else g.items.push(oanda.resolveTicker(x)); }
+  groups.push(g);
   const row = n => {
     const p = state.prices[n]; const pc = state.prevClose[n]; const info = oanda.instInfo(n); const prec = info.prec ?? 5;
     const abs = p && pc ? p.mid - pc : null; const pct = abs !== null ? abs / pc * 100 : null; const cls = abs === null ? '' : abs >= 0 ? 'up' : 'down';
@@ -548,7 +677,9 @@ function renderWatch() {
     return `<div class="wrow ${n === state.instrument ? 'cur' : ''}" data-n="${n}">${symIcon(n, isMob() ? 44 : 18)}<div class="wn"><span class="s">${esc(oanda.short(n))}</span><span class="d">${esc(info.display || '')}</span></div>
       <div class="wp"><span class="pr ${fl}">${p ? fmtSup(p.mid, prec) : '–'}</span><span class="chg ${cls}"><span class="abs">${abs === null ? '' : (abs >= 0 ? '+' : '') + abs.toFixed(prec)}</span><span class="pct">${pct === null ? '' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></span></div></div>`;
   };
-  const body = cats.map(c => `<div class="wsec ${shut[c] ? 'shut' : ''}" data-cat="${esc(c)}">${ICON.chevD}<span>${esc(c)}</span></div>${shut[c] ? '' : groups[c].map(row).join('')}`).join('');
+  const sk = c => L.id + c;
+  const body = groups.filter(x => x.name || x.items.length).map(x => (x.name ? `<div class="wsec ${shut[sk(x.name)] ? 'shut' : ''}" data-cat="${esc(x.name)}">${ICON.chevD}<span>${esc(x.name.slice(3))}</span></div>` : '') + (x.name && shut[sk(x.name)] ? '' : x.items.map(row).join(''))).join('')
+    || `<p class="hint" style="padding:24px 16px">Lista vazia. Toque em + para adicionar ativos.</p>`;
   let det = '';
   if (!isMob()) {
     const v = core.view(); const lb = v.at(-1); const info = oanda.instInfo(state.instrument); const prec = info.prec ?? 5; const pb = v.at(-2);
@@ -558,8 +689,10 @@ function renderWatch() {
         <div class="ohlc"><span>Abertura<b>${lb.open.toFixed(prec)}</b></span><span>Máxima<b>${lb.high.toFixed(prec)}</b></span><span>Mínima<b>${lb.low.toFixed(prec)}</b></span><span>Fech.<b>${lb.close.toFixed(prec)}</b></span></div></div>`; }
   }
   const keep = w.querySelector('.wl')?.scrollTop || 0;
+  const tabs = `<div class="wtabs"><button class="wmenu" data-act="wlists" title="Listas">${ICON.menuTab}</button><div class="wtl">${state.lists.map(x => `<button class="wtab ${x.id === L.id ? 'on' : ''}" data-list="${x.id}">${x.id === L.id ? '<i class="flag"></i>' : ''}${esc(x.name)}</button>`).join('')}</div></div>`;
   w.innerHTML = `<div class="wh"><span class="wt">${isMob() ? 'Lista de observação' : 'Lista'}</span><span class="wacts"><button data-act="wadd" title="Adicionar ativo">${ICON.plus}</button>${isMob() ? `<button data-act="symbol">${ICON.search}</button>` : `<button data-act="watch" title="Fechar">${ICON.x}</button>`}</span></div>
-    <div class="wcols"><span>Símbolo</span><span>Preço</span><span>Var%</span></div><div class="wl">${body}</div>${det}`;
+    ${tabs}<div class="wcols"><span>Símbolo</span><span>Preço</span><span>Var%</span></div><div class="wl">${body}</div>${det}`;
+  w.querySelector('.wtab.on')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   const wl = w.querySelector('.wl'); if (wl) wl.scrollTop = keep;
 }
 async function pollWatch() {
@@ -622,8 +755,10 @@ const ACT = {
   },
   recent: el => { if (isMob()) setTab('chart'); loadSymbol(el.dataset.i, el.dataset.tf); },
   wadd: () => openSymbol(),
+  wlists: () => openListMenu(),
 };
 function bindEvents() {
+  bindWheel();
   document.addEventListener('click', e => {
     const t = e.target.closest('[data-act]'); if (t && !t.closest('#sheet')) { const f = ACT[t.dataset.act]; if (f) { f(t, e); return; } }
     const g = e.target.closest('.tool[data-g]');
@@ -651,10 +786,17 @@ function bindEvents() {
   });
   $('#watch').addEventListener('click', e => {
     if (e.target.closest('[data-act]')) return;
-    const sec = e.target.closest('.wsec'); if (sec) { const sh = store.get('wshut', {}); sh[sec.dataset.cat] = !sh[sec.dataset.cat]; store.set('wshut', sh); renderWatch(); return; }
+    const lt = e.target.closest('[data-list]'); if (lt) { state.listId = lt.dataset.list; saveLists(); return; }
+    const sec = e.target.closest('.wsec'); if (sec) { const k = curList().id + sec.dataset.cat; const sh = store.get('wshut', {}); sh[k] = !sh[k]; store.set('wshut', sh); renderWatch(); return; }
     const r = e.target.closest('.wrow'); if (r) { if (isMob()) setTab('chart'); loadSymbol(r.dataset.n); }
   });
-  $('#watch').addEventListener('contextmenu', e => { const r = e.target.closest('.wrow'); if (!r) return; e.preventDefault(); popMenu(r, [{ label: 'Remover da lista', icon: ICON.trash, onClick: () => toggleWatch(r.dataset.n) }]); });
+  // segurar o dedo (ou botão direito) num ativo/seção/aba abre o menu dele
+  $('#watch').addEventListener('contextmenu', e => {
+    const r = e.target.closest('.wrow'), sec = e.target.closest('.wsec'), lt = e.target.closest('[data-list]'); if (!r && !sec && !lt) return; e.preventDefault();
+    if (r) { const raw = curList().items.find(x => oanda.resolveTicker(x) === r.dataset.n) || r.dataset.n; openRowMenu(raw); }
+    else if (sec) openSecMenu(sec.dataset.cat);
+    else { state.listId = lt.dataset.list; saveLists(); openListMenu(); }
+  });
 }
 
 
@@ -867,10 +1009,18 @@ function openInputs(s) {
   const plots = Object.entries(scripts.results[s.id]?.ctx?.plots || {}).filter(([t, p]) => !t.startsWith('__') && !['barcolor'].includes(p.options?.style));
   const sty = s.styles || {};
   const hexOf = c => { const m = /^#([0-9a-f]{6})/i.exec(String(c || '')); if (m) return '#' + m[1]; const r = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(String(c || '')); return r ? '#' + [r[1], r[2], r[3]].map(x => (+x).toString(16).padStart(2, '0')).join('') : '#2962ff'; };
-  const styleBody = plots.map(([t, p], k) => { const o = sty[t] || {}; return `<div class="strow" data-t="${esc(t)}"><label class="chk" style="margin:0;flex:1"><input type="checkbox" data-sv ${o.hidden ? '' : 'checked'}> ${esc(t)}</label>
-      <input type="color" class="color-in" data-sc value="${o.color || hexOf(p.options?.color)}">
-      <select class="inp" data-sw style="width:64px">${[1, 2, 3, 4].map(w => `<option ${(o.width || p.options?.linewidth || 1) === w ? 'selected' : ''}>${w}</option>`).join('')}</select>
-      <select class="inp" data-ss style="width:96px">${[['solid', 'Sólida'], ['dashed', 'Tracejada'], ['dotted', 'Pontilhada']].map(([v, l]) => `<option value="${v}" ${(o.style || 'solid') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`; }).join('') || '<p class="hint">Rode o indicador uma vez para ver os plots aqui.</p>';
+  // cores que o plot usa (cor dinâmica = várias), na ordem em que aparecem → Cor 0, Cor 1, Cor 2…
+  const colorsOf = p => { const out = []; const add = c => { const h = hex6(c); if (h && !out.includes(h)) out.push(h); };
+    for (const d of p.data || []) { if (d.options?.color && !isNaN(d.value) && d.value !== null) add(d.options.color); if (out.length >= 8) break; }
+    if (!out.length) add(p.options?.color || '#2962ff'); return out; };
+  const LS = [['solid', 'Sólida'], ['dashed', 'Tracejada'], ['dotted', 'Pontilhada']];
+  const styleBody = plots.map(([t, p]) => { const o = sty[t] || {}; const cols = colorsOf(p);
+    const sw = (c, i) => { const cur = o.colors?.[c] || (cols.length === 1 && o.color) || c; return `<label class="csw"><input type="color" data-orig="${c}" value="${cur}"><span style="background:${cur}"></span><i style="background:${cur}"></i></label>`; };
+    const extra = `<select class="inp" data-sw title="Espessura">${[1, 2, 3, 4].map(w => `<option value="${w}" ${(o.width || p.options?.linewidth || 1) === w ? 'selected' : ''}>${w}px</option>`).join('')}</select>
+      <select class="inp" data-ss title="Estilo">${LS.map(([v, l]) => `<option value="${v}" ${(o.style || 'solid') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+    const hd = `<label class="chk st-name"><input type="checkbox" data-sv ${o.hidden ? '' : 'checked'}> ${esc(t)}</label>`;
+    return `<div class="strow" data-t="${esc(t)}">${cols.length === 1 ? `<div class="st-line">${hd}${sw(cols[0], 0)}</div><div class="st-sub">${extra}</div>`
+      : `${hd}${cols.map((c, i) => `<div class="st-line sub"><span class="st-cn">Cor ${i}</span>${sw(c, i)}</div>`).join('')}<div class="st-sub">${extra}</div>`}</div>`; }).join('') || '<p class="hint">Rode o indicador uma vez para ver os plots aqui.</p>';
   // ---- aba Visibilidade: em quais timeframes aparece ----
   const VG = [['min', 'Minutos'], ['hour', 'Horas'], ['day', 'Dias'], ['week', 'Semanas'], ['month', 'Meses']];
   const tfs = s.tfs || VG.map(v => v[0]);
@@ -879,6 +1029,7 @@ function openInputs(s) {
     <div class="sh-body"><div data-pane="in">${body}</div><div data-pane="st" hidden>${styleBody}</div><div data-pane="vi" hidden>${visBody}</div>
     <div class="btns"><button class="btn ghost" id="in-reset">Padrões</button><button class="btn ghost" data-close>Cancelar</button><button class="btn" id="in-ok">Ok</button></div></div>`);
   sh.querySelectorAll('[data-close]').forEach(b => b.onclick = closeModal);
+  sh.querySelectorAll('.csw input').forEach(i => { i.oninput = () => i.parentElement.querySelectorAll('span,i').forEach(x => { x.style.background = i.value; }); });
   sh.querySelector('.itabs').onclick = e => { const t = e.target.closest('[data-tab]')?.dataset.tab; if (!t) return; sh.querySelectorAll('.itabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t)); sh.querySelectorAll('[data-pane]').forEach(p => p.hidden = p.dataset.pane !== t); };
   sh.querySelector('#in-reset').onclick = () => { s.styles = {}; s.tfs = null; scripts.setInputs(s.id, {}); closeModal(); };
   sh.querySelector('#in-ok').onclick = () => {
@@ -892,7 +1043,7 @@ function openInputs(s) {
     sh.querySelectorAll('.strow').forEach(r => {
       const t = r.dataset.t; const p = plots.find(x => x[0] === t)?.[1]; const o = {};
       if (!r.querySelector('[data-sv]').checked) o.hidden = true;
-      const c = r.querySelector('[data-sc]').value; if (c !== hexOf(p?.options?.color)) o.color = c;
+      const cm = {}; r.querySelectorAll('[data-orig]').forEach(inp => { if (inp.value.toLowerCase() !== inp.dataset.orig) cm[inp.dataset.orig] = inp.value.toLowerCase(); }); if (Object.keys(cm).length) o.colors = cm;
       const w = +r.querySelector('[data-sw]').value; if (w !== (p?.options?.linewidth || 1)) o.width = w;
       const ss = r.querySelector('[data-ss]').value; if (ss !== 'solid') o.style = ss;
       if (Object.keys(o).length) styles[t] = o;
@@ -1067,7 +1218,7 @@ sync.hooks({
   onRemote: keys => {
     if (keys.some(k => k === 'draw:' + state.instrument)) drawings.loadFor(state.instrument);
     if (keys.some(k => k.startsWith('scripts:'))) { scripts.active = store.get('scripts:active', []); scripts.lib = store.get('scripts:lib', []); scripts.runAll(); }
-    if (keys.includes('watch')) { state.watch = store.get('watch', state.watch); renderWatch(); }
+    if (keys.includes('wlists') || keys.includes('watch')) { state.lists = store.get('wlists', state.lists); state.watch = curList().items.filter(x => !x.startsWith('###')); renderWatch(); renderMBot(); }
     if (keys.includes('favTfs')) { state.favTfs = store.get('favTfs', state.favTfs); renderTop(); }
     ui.toast('Sincronizado com o outro aparelho');
   },

@@ -277,26 +277,29 @@ export class Scripts {
         const fin = vals.filter(v => typeof v === 'number' && isFinite(v));
         const constant = fin.length > 5 && fin.every(v => v === fin[0]);
         // overlay com valores longe do preço (ex.: spread de yield): escala própria, para não achatar os candles
-        const ownScale = overlay && pr && fin.length > 5 && offPrice(fin, pr);
-        const baseColor = ov.color || toRgba(p.options?.color, '#2962ff');
+        // (todas as linhas desse script dividem a mesma escala, senão cada uma se redimensiona sozinha)
+        const ownScale = overlay && (p.options?.ownScale ?? (pr && fin.length > 5 && offPrice(fin, pr)));
+        // Cor 0/1/2… do Estilo: troca cada cor original pela escolhida, mantendo a cor dinâmica
+        const remap = c => { const h = hex6(c); const n = h && ov.colors?.[h]; return n ? toRgba(n + (/^#[0-9a-f]{8}$/i.test(String(c)) ? String(c).slice(7) : '')) : toRgba(c); };
+        const baseColor = ov.color || (p.options?.color ? remap(p.options.color) : '#2962ff');
         const lw = ov.width || Math.max(1, Math.min(4, p.options?.linewidth || 1));
         const lsty = ov.style === 'dashed' ? LineStyle.Dashed : ov.style === 'dotted' ? LineStyle.Dotted : null;
         let series, rows;
         if (style === 'style_histogram' || style === 'style_columns') {
           series = chart.addSeries(HistogramSeries, { priceFormat: pf, lastValueVisible: true, priceLineVisible: false, base: 0 }, pIdx);
-          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: ov.color || toRgba(d.options?.color, baseColor) });
+          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: ov.color || (d.options?.color ? remap(d.options.color) : baseColor) });
         } else if (style === 'style_area' || style === 'style_areabr') {
           series = chart.addSeries(AreaSeries, { priceFormat: pf, lineColor: baseColor, topColor: baseColor.replace(/[\d.]+\)$/, '0.3)'), bottomColor: 'rgba(0,0,0,0)', lineWidth: lw, priceLineVisible: false }, pIdx);
           rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value });
         } else {
           const dots = style === 'style_circles' || style === 'style_cross';
           series = chart.addSeries(LineSeries, {
-            ...(ownScale ? { priceScaleId: 'own-' + s.id + '-' + title } : {}),
+            ...(ownScale ? { priceScaleId: 'own-' + s.id } : {}),
             priceFormat: ownScale ? { type: 'price', precision: 3, minMove: 0.001 } : pf, color: baseColor, lineWidth: constant && !ov.width ? 1 : lw, lineStyle: lsty ?? (constant ? LineStyle.Dashed : LineStyle.Solid),
             lineType: style === 'style_stepline' ? LineType.WithSteps : LineType.Simple, lineVisible: !dots, pointMarkersVisible: dots, pointMarkersRadius: dots ? 2 : undefined,
             lastValueVisible: !constant && !ownScale, priceLineVisible: false, crosshairMarkerVisible: !constant, crosshairMarkerRadius: 3,
           }, pIdx);
-          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: !ov.color && d.options && 'color' in d.options ? toRgba(d.options.color) : undefined });
+          rows = data.map(d => isNA(d.value) ? { time: d.time / 1000 } : { time: d.time / 1000, value: d.value, color: !ov.color && d.options && 'color' in d.options ? remap(d.options.color) : undefined });
         }
         if (ownScale) { try { series.priceScale().applyOptions({ scaleMargins: { top: 0.15, bottom: 0.15 } }); } catch { /* */ } }
         try { series.setData(rows); } catch { series.setData(dedupe(rows)); }
@@ -376,6 +379,11 @@ export class Scripts {
   }
 }
 
+export function hex6(c) {
+  const t = String(c || '').trim(); let m = /^#([0-9a-f]{6})/i.exec(t); if (m) return '#' + m[1].toLowerCase();
+  m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(t); if (m) return ('#' + m[1] + m[1] + m[2] + m[2] + m[3] + m[3]).toLowerCase();
+  m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(t); return m ? '#' + [m[1], m[2], m[3]].map(x => (+x).toString(16).padStart(2, '0')).join('') : null;
+}
 function priceRange(view) {
   if (!view.length) return null; let lo = Infinity, hi = -Infinity;
   for (const b of view) { if (b.low < lo) lo = b.low; if (b.high > hi) hi = b.high; }
